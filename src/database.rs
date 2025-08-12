@@ -1,7 +1,7 @@
 use crate::error::AppResult;
 use crate::models::{ApiKey, MessageLog, User};
-use chrono::{DateTime, Utc};
-use sqlx::{MySql, MySqlPool, Pool};
+use chrono::Utc;
+use sqlx::{MySql, MySqlPool, Pool, Row};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -26,17 +26,17 @@ impl Database {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO users (id, username, password_hash, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
             "#,
-            id.to_string(),
-            username,
-            password_hash,
-            now,
-            now
         )
+        .bind(id.to_string())
+        .bind(username)
+        .bind(password_hash)
+        .bind(now)
+        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -50,40 +50,40 @@ impl Database {
     }
 
     pub async fn get_user_by_username(&self, username: &str) -> AppResult<Option<User>> {
-        let row = sqlx::query!(
+        let row = sqlx::query(
             "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = ?",
-            username
         )
+        .bind(username)
         .fetch_optional(&self.pool)
         .await?;
 
         match row {
             Some(row) => Ok(Some(User {
-                id: Uuid::parse_str(&row.id).unwrap(),
-                username: row.username,
-                password_hash: row.password_hash,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
+                id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
+                username: row.get("username"),
+                password_hash: row.get("password_hash"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
             })),
             None => Ok(None),
         }
     }
 
     pub async fn get_user_by_id(&self, user_id: &Uuid) -> AppResult<Option<User>> {
-        let row = sqlx::query!(
+        let row = sqlx::query(
             "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE id = ?",
-            user_id.to_string()
         )
+        .bind(user_id.to_string())
         .fetch_optional(&self.pool)
         .await?;
 
         match row {
             Some(row) => Ok(Some(User {
-                id: Uuid::parse_str(&row.id).unwrap(),
-                username: row.username,
-                password_hash: row.password_hash,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
+                id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
+                username: row.get("username"),
+                password_hash: row.get("password_hash"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
             })),
             None => Ok(None),
         }
@@ -99,18 +99,18 @@ impl Database {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO api_keys (id, key_hash, name, permissions, created_by, created_at, revoked_at)
             VALUES (?, ?, ?, ?, ?, ?, NULL)
             "#,
-            id.to_string(),
-            key_hash,
-            name,
-            permissions,
-            created_by.to_string(),
-            now
         )
+        .bind(id.to_string())
+        .bind(key_hash)
+        .bind(name)
+        .bind(permissions)
+        .bind(created_by.to_string())
+        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -126,26 +126,26 @@ impl Database {
     }
 
     pub async fn get_api_key_by_hash(&self, key_hash: &str) -> AppResult<Option<ApiKey>> {
-        let row = sqlx::query!(
+        let row = sqlx::query(
             r#"
             SELECT id, key_hash, name, permissions, created_by, created_at, revoked_at
             FROM api_keys 
             WHERE key_hash = ? AND revoked_at IS NULL
             "#,
-            key_hash
         )
+        .bind(key_hash)
         .fetch_optional(&self.pool)
         .await?;
 
         match row {
             Some(row) => Ok(Some(ApiKey {
-                id: Uuid::parse_str(&row.id).unwrap(),
-                key_hash: row.key_hash,
-                name: row.name,
-                permissions: row.permissions,
-                created_by: Uuid::parse_str(&row.created_by).unwrap(),
-                created_at: row.created_at,
-                revoked_at: row.revoked_at,
+                id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
+                key_hash: row.get("key_hash"),
+                name: row.get("name"),
+                permissions: row.get("permissions"),
+                created_by: Uuid::parse_str(row.get::<String, _>("created_by").as_str()).unwrap(),
+                created_at: row.get("created_at"),
+                revoked_at: row.get("revoked_at"),
             })),
             None => Ok(None),
         }
@@ -153,11 +153,11 @@ impl Database {
 
     pub async fn revoke_api_key(&self, key_id: &Uuid) -> AppResult<bool> {
         let now = Utc::now();
-        let result = sqlx::query!(
+        let result = sqlx::query(
             "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
-            now,
-            key_id.to_string()
         )
+        .bind(now)
+        .bind(key_id.to_string())
         .execute(&self.pool)
         .await?;
 
@@ -175,19 +175,19 @@ impl Database {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO message_logs (id, sender_type, sender_id, recipient, message, status, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
-            id.to_string(),
-            sender_type,
-            sender_id.to_string(),
-            recipient,
-            message,
-            status,
-            now
         )
+        .bind(id.to_string())
+        .bind(sender_type)
+        .bind(sender_id.to_string())
+        .bind(recipient)
+        .bind(message)
+        .bind(status)
+        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -211,7 +211,7 @@ impl Database {
 
         let rows = match sender_id {
             Some(id) => {
-                sqlx::query!(
+                sqlx::query(
                     r#"
                     SELECT id, sender_type, sender_id, recipient, message, status, timestamp
                     FROM message_logs 
@@ -219,22 +219,22 @@ impl Database {
                     ORDER BY timestamp DESC
                     LIMIT ?
                     "#,
-                    id.to_string(),
-                    limit
                 )
+                .bind(id.to_string())
+                .bind(limit)
                 .fetch_all(&self.pool)
                 .await?
             }
             None => {
-                sqlx::query!(
+                sqlx::query(
                     r#"
                     SELECT id, sender_type, sender_id, recipient, message, status, timestamp
                     FROM message_logs 
                     ORDER BY timestamp DESC
                     LIMIT ?
                     "#,
-                    limit
                 )
+                .bind(limit)
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -243,13 +243,13 @@ impl Database {
         let logs = rows
             .into_iter()
             .map(|row| MessageLog {
-                id: Uuid::parse_str(&row.id).unwrap(),
-                sender_type: row.sender_type,
-                sender_id: Uuid::parse_str(&row.sender_id).unwrap(),
-                recipient: row.recipient,
-                message: row.message,
-                status: row.status,
-                timestamp: row.timestamp,
+                id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
+                sender_type: row.get("sender_type"),
+                sender_id: Uuid::parse_str(row.get::<String, _>("sender_id").as_str()).unwrap(),
+                recipient: row.get("recipient"),
+                message: row.get("message"),
+                status: row.get("status"),
+                timestamp: row.get("timestamp"),
             })
             .collect();
 
@@ -258,26 +258,27 @@ impl Database {
 
     pub async fn find_api_key_by_verification(&self, api_key: &str, auth_service: &crate::auth::AuthService) -> AppResult<Option<ApiKey>> {
         // Get all active API keys for verification
-        let rows = sqlx::query!(
+        let rows = sqlx::query(
             r#"
             SELECT id, key_hash, name, permissions, created_by, created_at, revoked_at
             FROM api_keys 
             WHERE revoked_at IS NULL
-            "#
+            "#,
         )
         .fetch_all(&self.pool)
         .await?;
 
         for row in rows {
-            if auth_service.verify_api_key(api_key, &row.key_hash).unwrap_or(false) {
+            let key_hash: String = row.get("key_hash");
+            if auth_service.verify_api_key(api_key, &key_hash).unwrap_or(false) {
                 return Ok(Some(ApiKey {
-                    id: Uuid::parse_str(&row.id).unwrap(),
-                    key_hash: row.key_hash,
-                    name: row.name,
-                    permissions: row.permissions,
-                    created_by: Uuid::parse_str(&row.created_by).unwrap(),
-                    created_at: row.created_at,
-                    revoked_at: row.revoked_at,
+                    id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
+                    key_hash: row.get("key_hash"),
+                    name: row.get("name"),
+                    permissions: row.get("permissions"),
+                    created_by: Uuid::parse_str(row.get::<String, _>("created_by").as_str()).unwrap(),
+                    created_at: row.get("created_at"),
+                    revoked_at: row.get("revoked_at"),
                 }));
             }
         }

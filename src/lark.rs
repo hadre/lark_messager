@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LarkConfig {
     pub app_id: String,
     pub app_secret: String,
@@ -84,8 +84,11 @@ impl LarkClient {
     }
 
     async fn get_tenant_access_token(&self) -> AppResult<String> {
-        let url = format!("{}/open-apis/auth/v3/tenant_access_token/internal", self.base_url);
-        
+        let url = format!(
+            "{}/open-apis/auth/v3/tenant_access_token/internal",
+            self.base_url
+        );
+
         let request_body = AccessTokenRequest {
             app_id: self.config.app_id.clone(),
             app_secret: self.config.app_secret.clone(),
@@ -93,12 +96,7 @@ impl LarkClient {
 
         debug!("Requesting Lark tenant access token");
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request_body)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&request_body).send().await?;
 
         if !response.status().is_success() {
             error!("Failed to get access token: HTTP {}", response.status());
@@ -108,7 +106,10 @@ impl LarkClient {
         let token_response: AccessTokenResponse = response.json().await?;
 
         if token_response.code != 0 {
-            error!("Lark API error: {} - {}", token_response.code, token_response.msg);
+            error!(
+                "Lark API error: {} - {}",
+                token_response.code, token_response.msg
+            );
             return Err(AppError::Lark(format!(
                 "API error: {} - {}",
                 token_response.code, token_response.msg
@@ -123,7 +124,11 @@ impl LarkClient {
         Ok(token)
     }
 
-    pub async fn send_message_to_user(&self, user_id: &str, message: &str) -> AppResult<Option<String>> {
+    pub async fn send_message_to_user(
+        &self,
+        user_id: &str,
+        message: &str,
+    ) -> AppResult<Option<String>> {
         let access_token = self.get_tenant_access_token().await?;
         let url = format!("{}/open-apis/im/v1/messages", self.base_url);
 
@@ -158,22 +163,30 @@ impl LarkClient {
         let message_response: SendMessageResponse = response.json().await?;
 
         if message_response.code != 0 {
-            error!("Lark API error: {} - {}", message_response.code, message_response.msg);
+            error!(
+                "Lark API error: {} - {}",
+                message_response.code, message_response.msg
+            );
             return Err(AppError::Lark(format!(
                 "API error: {} - {}",
                 message_response.code, message_response.msg
             )));
         }
 
-        let message_id = message_response
-            .data
-            .and_then(|data| data.message_id);
+        let message_id = message_response.data.and_then(|data| data.message_id);
 
-        info!("Successfully sent message to user: {}, message_id: {:?}", user_id, message_id);
+        info!(
+            "Successfully sent message to user: {}, message_id: {:?}",
+            user_id, message_id
+        );
         Ok(message_id)
     }
 
-    pub async fn send_message_to_chat(&self, chat_id: &str, message: &str) -> AppResult<Option<String>> {
+    pub async fn send_message_to_chat(
+        &self,
+        chat_id: &str,
+        message: &str,
+    ) -> AppResult<Option<String>> {
         let access_token = self.get_tenant_access_token().await?;
         let url = format!("{}/open-apis/im/v1/messages", self.base_url);
 
@@ -208,18 +221,22 @@ impl LarkClient {
         let message_response: SendMessageResponse = response.json().await?;
 
         if message_response.code != 0 {
-            error!("Lark API error: {} - {}", message_response.code, message_response.msg);
+            error!(
+                "Lark API error: {} - {}",
+                message_response.code, message_response.msg
+            );
             return Err(AppError::Lark(format!(
                 "API error: {} - {}",
                 message_response.code, message_response.msg
             )));
         }
 
-        let message_id = message_response
-            .data
-            .and_then(|data| data.message_id);
+        let message_id = message_response.data.and_then(|data| data.message_id);
 
-        info!("Successfully sent message to chat: {}, message_id: {:?}", chat_id, message_id);
+        info!(
+            "Successfully sent message to chat: {}, message_id: {:?}",
+            chat_id, message_id
+        );
         Ok(message_id)
     }
 
@@ -251,7 +268,10 @@ impl LarkClient {
         let lookup_response: BatchGetIdResponse = response.json().await?;
 
         if lookup_response.code != 0 {
-            error!("Lark API error: {} - {}", lookup_response.code, lookup_response.msg);
+            error!(
+                "Lark API error: {} - {}",
+                lookup_response.code, lookup_response.msg
+            );
             return Err(AppError::Lark(format!(
                 "API error: {} - {}",
                 lookup_response.code, lookup_response.msg
@@ -289,14 +309,20 @@ impl LarkClient {
             .await?;
 
         if !response.status().is_success() {
-            error!("Failed to lookup user by mobile: HTTP {}", response.status());
+            error!(
+                "Failed to lookup user by mobile: HTTP {}",
+                response.status()
+            );
             return Err(AppError::Lark(format!("HTTP error: {}", response.status())));
         }
 
         let lookup_response: BatchGetIdResponse = response.json().await?;
 
         if lookup_response.code != 0 {
-            error!("Lark API error: {} - {}", lookup_response.code, lookup_response.msg);
+            error!(
+                "Lark API error: {} - {}",
+                lookup_response.code, lookup_response.msg
+            );
             return Err(AppError::Lark(format!(
                 "API error: {} - {}",
                 lookup_response.code, lookup_response.msg
@@ -313,7 +339,11 @@ impl LarkClient {
         Ok(user_id)
     }
 
-    pub async fn verify_recipient(&self, recipient: &str, recipient_type: Option<&str>) -> AppResult<Option<String>> {
+    pub async fn verify_recipient(
+        &self,
+        recipient: &str,
+        recipient_type: Option<&str>,
+    ) -> AppResult<Option<String>> {
         match recipient_type.unwrap_or("auto").to_lowercase().as_str() {
             "user_id" | "open_id" | "union_id" => {
                 // Assume these are valid if they look like proper IDs
@@ -347,7 +377,10 @@ impl LarkClient {
                     Ok(None)
                 }
             }
-            _ => Err(AppError::Validation(format!("Unknown recipient type: {}", recipient_type.unwrap_or("auto"))))
+            _ => Err(AppError::Validation(format!(
+                "Unknown recipient type: {}",
+                recipient_type.unwrap_or("auto")
+            ))),
         }
     }
 }
