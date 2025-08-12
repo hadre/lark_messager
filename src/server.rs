@@ -92,12 +92,22 @@ impl Server {
         info!("Log level: {}", self.config.log_level);
 
         // 第二步：初始化数据库连接
-        // 连接数据库并自动执行迁移脚本
+        // 连接数据库并执行迁移脚本
         info!("Connecting to database: {}", 
               // 隐藏密码信息，仅显示主机和数据库名
               self.config.database_url.split('@').last().unwrap_or("***"));
         let db = Database::new(&self.config.database_url).await?;
-        info!("Database connection established and migrations applied");
+        info!("Database connection established");
+        
+        // 根据配置决定是否执行数据库迁移
+        if self.config.auto_migrate {
+            info!("Running database migrations (AUTO_MIGRATE=true)...");
+            db.migrate().await?;
+            info!("Database migrations completed successfully");
+        } else {
+            info!("Skipping database migrations (AUTO_MIGRATE=false)");
+            info!("Note: Please ensure database schema is up-to-date before starting");
+        }
 
         // 第三步：初始化认证服务
         // 配置 JWT 和 API Key 双重认证机制

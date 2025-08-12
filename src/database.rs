@@ -30,7 +30,30 @@ pub struct Database {
 impl Database {
     /// 创建新的数据库连接实例
     /// 
+    /// 仅连接到 MySQL 数据库，不执行迁移操作。
+    /// 建议在应用启动时显式调用 `migrate()` 方法。
+    /// 
+    /// # 参数
+    /// - `database_url`: MySQL 连接字符串，格式：mysql://user:pass@host:port/db
+    /// 
+    /// # 错误
+    /// - 数据库连接失败
+    /// - URL 格式错误
+    /// 
+    /// # 使用示例
+    /// ```rust
+    /// let db = Database::new(&database_url).await?;
+    /// db.migrate().await?; // 显式执行迁移
+    /// ```
+    pub async fn new(database_url: &str) -> AppResult<Self> {
+        let pool = MySqlPool::connect(database_url).await?;
+        Ok(Database { pool })
+    }
+
+    /// 创建新的数据库连接实例并自动执行迁移
+    /// 
     /// 连接到 MySQL 数据库并自动执行数据库迁移。
+    /// 这是一个便利方法，适用于开发环境或单实例部署。
     /// 
     /// # 参数
     /// - `database_url`: MySQL 连接字符串，格式：mysql://user:pass@host:port/db
@@ -39,7 +62,11 @@ impl Database {
     /// - 数据库连接失败
     /// - 数据库迁移失败
     /// - URL 格式错误
-    pub async fn new(database_url: &str) -> AppResult<Self> {
+    /// 
+    /// # 生产环境建议
+    /// 在生产环境中，建议使用 `new()` + 显式 `migrate()` 的方式，
+    /// 或者使用独立的迁移工具（如 `sqlx migrate run`）。
+    pub async fn new_with_migrations(database_url: &str) -> AppResult<Self> {
         let pool = MySqlPool::connect(database_url).await?;
         let db = Database { pool };
         db.migrate().await?;
@@ -50,6 +77,19 @@ impl Database {
     /// 
     /// 自动执行 migrations 目录下的所有迁移脚本，确保数据库结构是最新的。
     /// SQLx 会跟踪已执行的迁移，避免重复执行。
+    /// 
+    /// # 安全性
+    /// - 使用事务确保迁移的原子性
+    /// - 自动跟踪已执行的迁移，避免重复
+    /// - 支持并发安全的迁移执行
+    /// 
+    /// # 最佳实践
+    /// - 开发环境：可以在应用启动时调用
+    /// - 生产环境：建议使用独立的部署脚本或工具执行
+    /// - 容器环境：可以使用 init 容器执行迁移
+    /// 
+    /// # 错误处理
+    /// 如果迁移失败，应用应该停止启动，避免在不一致的数据库状态下运行。
     pub async fn migrate(&self) -> AppResult<()> {
         sqlx::migrate!("./migrations").run(&self.pool).await?;
         Ok(())

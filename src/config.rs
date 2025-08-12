@@ -44,6 +44,10 @@ pub struct Config {
     /// 生成的 API Key 长度
     /// 用于控制自动生成的 API Key 的字符数
     pub api_key_length: usize,
+    
+    /// 是否在启动时自动执行数据库迁移
+    /// 默认为 true（开发环境友好），生产环境建议设为 false
+    pub auto_migrate: bool,
 }
 
 impl Config {
@@ -64,6 +68,7 @@ impl Config {
     /// - `SERVER_PORT`: 服务器端口
     /// - `LOG_LEVEL`: 日志级别
     /// - `API_KEY_LENGTH`: API Key 长度
+    /// - `AUTO_MIGRATE`: 是否自动执行数据库迁移
     /// 
     /// # 错误
     /// 如果必需的环境变量缺失或格式错误，将返回 `AppError::Config`
@@ -103,6 +108,12 @@ impl Config {
                 .unwrap_or_else(|_| "64".to_string())
                 .parse()
                 .map_err(|_| AppError::Config("Invalid API_KEY_LENGTH".to_string()))?,
+            
+            // 数据库迁移配置
+            auto_migrate: env::var("AUTO_MIGRATE")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .map_err(|_| AppError::Config("Invalid AUTO_MIGRATE (expected true/false)".to_string()))?,
         })
     }
 }
