@@ -1,0 +1,31 @@
+-- Create an admin user for testing
+-- Password is "admin123" (hashed with Argon2)
+-- You'll need to update the password_hash with actual Argon2 hash
+
+-- First, generate the password hash by running this in your application or using a tool:
+-- use argon2::{Argon2, PasswordHasher, password_hash::{rand_core::OsRng, SaltString}};
+-- let salt = SaltString::generate(&mut OsRng);
+-- let argon2 = Argon2::default();
+-- let password_hash = argon2.hash_password(b"admin123", &salt).unwrap();
+
+INSERT INTO users (id, username, password_hash, created_at, updated_at) 
+VALUES (
+    '01234567-89ab-cdef-0123-456789abcdef',
+    'admin',
+    '$argon2id$v=19$m=19456,t=2,p=1$REPLACE_WITH_ACTUAL_HASH',
+    datetime('now'),
+    datetime('now')
+);
+
+-- Create an API key for the admin user (optional)
+-- Hash for "test-api-key-12345" - replace with actual hash
+INSERT INTO api_keys (id, key_hash, name, permissions, created_by, created_at, revoked_at)
+VALUES (
+    '12345678-89ab-cdef-0123-456789abcdef',
+    '$argon2id$v=19$m=19456,t=2,p=1$REPLACE_WITH_ACTUAL_HASH',
+    'Test Admin API Key',
+    'admin,send_messages',
+    '01234567-89ab-cdef-0123-456789abcdef',
+    datetime('now'),
+    NULL
+);

@@ -1,0 +1,14 @@
+target/
+.git
+.gitignore
+README.md
+.env
+.env.local
+lark_messager.log
+lark_messager.db
+lark_messager.db-shm
+lark_messager.db-wal
+.vscode/
+.idea/
+*.swp
+*.swo
