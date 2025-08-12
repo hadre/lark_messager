@@ -137,10 +137,12 @@ pub struct SendMessageRequest {
 /// 发送群组消息的请求
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SendGroupMessageRequest {
-    /// 群组/聊天 ID
-    pub chat_id: String,
+    /// 群组/聊天标识（聊天 ID 或聊天名称）
+    pub recipient: String,
     /// 消息内容
     pub message: String,
+    /// 接收者类型：chat_id, chat_name, auto（可选）
+    pub recipient_type: Option<String>,
 }
 
 /// 验证接收者的请求

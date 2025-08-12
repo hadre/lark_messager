@@ -406,8 +406,18 @@ pub async fn send_message(
 /// # 请求体
 /// ```json
 /// {
-///   "chat_id": "oc_1234567890abcdef",
-///   "message": "Hello everyone!"
+///   "recipient": "oc_1234567890abcdef",
+///   "message": "Hello everyone!",
+///   "recipient_type": "chat_id"
+/// }
+/// ```
+/// 
+/// 或者使用群聊名称：
+/// ```json
+/// {
+///   "recipient": "技术讨论群",
+///   "message": "Hello everyone!",
+///   "recipient_type": "chat_name"
 /// }
 /// ```
 /// 
@@ -462,21 +472,44 @@ pub async fn send_group_message(
     }
 
     info!(
-        "Sending group message from user {} to chat: {}",
+        "Sending group message from user {} to recipient: {} (type: {:?})",
         auth_user.id(),
-        request.chat_id
+        request.recipient,
+        request.recipient_type
     );
+
+    // Resolve the recipient to get the actual chat_id
+    let chat_id = match state
+        .lark
+        .verify_recipient(&request.recipient, request.recipient_type.as_deref())
+        .await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            warn!("Chat not found for recipient: {}", request.recipient);
+            return Err(AppError::NotFound(format!(
+                "Chat not found: {}",
+                request.recipient
+            )));
+        }
+        Err(e) => {
+            error!("Failed to verify chat recipient {}: {}", request.recipient, e);
+            return Err(e);
+        }
+    };
+
+    info!("Resolved chat recipient '{}' to chat_id: {}", request.recipient, chat_id);
 
     // Send the message
     let result = state
         .lark
-        .send_message_to_chat(&request.chat_id, &request.message)
+        .send_message_to_chat(&chat_id, &request.message)
         .await;
 
     let (status, message_id) = match &result {
         Ok(msg_id) => (MessageStatus::Sent, msg_id.clone()),
         Err(e) => {
-            error!("Failed to send group message to {}: {}", request.chat_id, e);
+            error!("Failed to send group message to {}: {}", chat_id, e);
             (MessageStatus::Failed, None)
         }
     };
@@ -487,7 +520,7 @@ pub async fn send_group_message(
         .log_message(
             &get_sender_type(&auth_user).to_string(),
             &auth_user.id(),
-            &request.chat_id,
+            &chat_id,
             &request.message,
             &status.to_string(),
         )
@@ -496,9 +529,10 @@ pub async fn send_group_message(
     match result {
         Ok(_) => {
             info!(
-                "Successfully sent group message from {} to {}",
+                "Successfully sent group message from {} to {} (resolved from '{}')",
                 auth_user.id(),
-                request.chat_id
+                chat_id,
+                request.recipient
             );
             Ok(Json(MessageResponse {
                 message_id,

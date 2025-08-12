@@ -7,6 +7,7 @@
  * - 发送消息给群聊/聊天室
  * - 通过邮箱查找用户 ID
  * - 通过手机号查找用户 ID
+ * - 通过群聊名称查找群聊 ID
  * - 智能识别接收者类型并验证
  *
  * 支持的接收者类型：
@@ -14,6 +15,7 @@
  * - email: 邮箱地址（自动转换为 user_id）
  * - mobile: 手机号（自动转换为 user_id）
  * - chat_id: 群聊 ID
+ * - chat_name: 群聊名称（自动转换为 chat_id）
  * - auto: 自动识别类型
  *
  * API 文档: https://open.feishu.cn/document/
@@ -136,6 +138,50 @@ struct UserInfo {
     email: Option<String>,
     /// 手机号码
     mobile: Option<String>,
+}
+
+/// 获取群聊列表请求结构体
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatListRequest {
+    /// 页面大小（最大 200）
+    page_size: Option<i32>,
+    /// 页面令牌（用于分页）
+    page_token: Option<String>,
+}
+
+/// 获取群聊列表响应结构体
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatListResponse {
+    /// 错误码，0 表示成功
+    code: i32,
+    /// 错误消息
+    msg: String,
+    /// 响应数据
+    data: Option<ChatListData>,
+}
+
+/// 获取群聊列表响应数据
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatListData {
+    /// 是否还有更多数据
+    has_more: Option<bool>,
+    /// 下一页的页面令牌
+    page_token: Option<String>,
+    /// 群聊列表
+    items: Option<Vec<ChatInfo>>,
+}
+
+/// 群聊信息结构体
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatInfo {
+    /// 群聊 ID
+    chat_id: String,
+    /// 群聊名称
+    name: Option<String>,
+    /// 群聊描述
+    description: Option<String>,
+    /// 群聊类型
+    chat_type: Option<String>,
 }
 
 /// 飞书 API 客户端
@@ -633,6 +679,118 @@ impl LarkClient {
         Ok(user_id)
     }
 
+    /// 通过群聊名称获取群聊 ID
+    /// 
+    /// 使用群聊名称查找对应的飞书群聊 ID。
+    /// 由于飞书 API 不支持直接按名称搜索，此方法会获取所有群聊列表并在本地进行名称匹配。
+    /// 
+    /// # 参数
+    /// - `chat_name`: 群聊的名称（支持完全匹配和部分匹配）
+    /// 
+    /// # 返回
+    /// - `Some(chat_id)`: 找到匹配的群聊 ID
+    /// - `None`: 没有找到匹配的群聊
+    /// 
+    /// # 匹配规则
+    /// 1. 完全匹配：群聊名称完全相同（优先级最高）
+    /// 2. 部分匹配：群聊名称包含搜索关键词
+    /// 3. 忽略大小写进行匹配
+    /// 
+    /// # 性能考虑
+    /// - 如果群聊较多，此操作可能比较耗时
+    /// - 建议在业务层面进行缓存优化
+    /// - 对于频繁使用的群聊，可考虑直接使用 chat_id
+    /// 
+    /// # 限制
+    /// - 需要机器人已加入目标群聊
+    /// - 需要相应的 API 权限读取群聊列表
+    /// - 每次查询都会遍历所有群聊（性能影响）
+    /// 
+    /// # API 文档
+    /// https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/chat/list
+    pub async fn get_chat_id_by_name(&self, chat_name: &str) -> AppResult<Option<String>> {
+        let access_token = self.get_tenant_access_token().await?;
+        let url = format!("{}/open-apis/im/v1/chats", self.base_url);
+
+        debug!("Looking up Lark chat by name: {}", chat_name);
+
+        let mut page_token: Option<String> = None;
+        let chat_name_lower = chat_name.to_lowercase();
+
+        // 遍历所有页面寻找匹配的群聊
+        loop {
+            let mut query_params = vec![("page_size", "200")];
+            if let Some(ref token) = page_token {
+                query_params.push(("page_token", token));
+            }
+
+            let response = self
+                .client
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", access_token))
+                .header("Content-Type", "application/json; charset=utf-8")
+                .query(&query_params)
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                error!("Failed to get chat list: HTTP {}", response.status());
+                return Err(AppError::Lark(format!("HTTP error: {}", response.status())));
+            }
+
+            let chat_response: ChatListResponse = response.json().await?;
+
+            if chat_response.code != 0 {
+                error!(
+                    "Lark API error: {} - {}",
+                    chat_response.code, chat_response.msg
+                );
+                return Err(AppError::Lark(format!(
+                    "API error: {} - {}",
+                    chat_response.code, chat_response.msg
+                )));
+            }
+
+            // 检查当前页面的群聊
+            if let Some(data) = chat_response.data {
+                if let Some(chats) = data.items {
+                    // 先寻找完全匹配的群聊名称
+                    for chat in &chats {
+                        if let Some(ref name) = chat.name {
+                            if name.to_lowercase() == chat_name_lower {
+                                debug!("Found exact match for chat name '{}': {}", chat_name, chat.chat_id);
+                                return Ok(Some(chat.chat_id.clone()));
+                            }
+                        }
+                    }
+
+                    // 如果没有完全匹配，寻找部分匹配
+                    for chat in &chats {
+                        if let Some(ref name) = chat.name {
+                            if name.to_lowercase().contains(&chat_name_lower) {
+                                debug!("Found partial match for chat name '{}': {} ({})", 
+                                      chat_name, chat.chat_id, name);
+                                return Ok(Some(chat.chat_id.clone()));
+                            }
+                        }
+                    }
+                }
+
+                // 检查是否还有更多数据
+                if data.has_more.unwrap_or(false) {
+                    page_token = data.page_token;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        debug!("No chat found with name: {}", chat_name);
+        Ok(None)
+    }
+
     /// 验证并解析接收者信息
     ///
     /// 智能识别接收者类型并验证其有效性。支持多种输入格式的自动识别。
@@ -648,6 +806,7 @@ impl LarkClient {
     /// - `email`: 邮箱地址（通过 API 查找对应的 user_id）
     /// - `mobile`: 手机号（通过 API 查找对应的 user_id）
     /// - `chat_id`: 群聊 ID（验证格式前缀）
+    /// - `chat_name`: 群聊名称（通过 API 查找对应的 chat_id）
     /// - `auto`: 自动识别类型（默认）
     ///
     /// # 自动识别规则（auto 模式）
@@ -655,7 +814,7 @@ impl LarkClient {
     /// 2. 全是数字和 "+" → 手机号
     /// 3. 以 "oc_" 或 "ou_" 开头 → 群聊 ID
     /// 4. 长度大于 10 位 → 用户 ID
-    /// 5. 其他情况 → 无效
+    /// 5. 其他情况 → 群聊名称（尝试查找）
     ///
     /// # 返回值
     /// - `Some(id)`: 找到有效的接收者 ID
@@ -674,8 +833,12 @@ impl LarkClient {
     /// // 自动识别手机号
     /// let user_id = client.verify_recipient("+8613800138000", None).await?;
     ///
+    /// // 自动识别群聊名称
+    /// let chat_id = client.verify_recipient("技术讨论群", None).await?;
+    ///
     /// // 指定类型
     /// let user_id = client.verify_recipient("ou_xxx", Some("user_id")).await?;
+    /// let chat_id = client.verify_recipient("开发组", Some("chat_name")).await?;
     /// ```
     pub async fn verify_recipient(
         &self,
@@ -701,6 +864,7 @@ impl LarkClient {
                     Ok(None)
                 }
             }
+            "chat_name" => self.get_chat_id_by_name(recipient).await,
             "auto" => {
                 // Auto-detect recipient type
                 if recipient.contains("@") {
@@ -712,7 +876,8 @@ impl LarkClient {
                 } else if recipient.len() > 10 {
                     Ok(Some(recipient.to_string()))
                 } else {
-                    Ok(None)
+                    // 尝试作为群聊名称查找
+                    self.get_chat_id_by_name(recipient).await
                 }
             }
             _ => Err(AppError::Validation(format!(
