@@ -121,7 +121,8 @@ impl Server {
         let app = create_router(state);
 
         // 第七步：绑定网络地址
-        let addr = SocketAddr::from(([0, 0, 0, 0], self.config.server_port));
+        // 使用配置中的主机地址和端口
+        let addr = format!("{}:{}", self.config.server_host, self.config.server_port);
         let listener = TcpListener::bind(&addr).await
             .map_err(|e| crate::error::AppError::Config(format!("Failed to bind to address {}: {}", addr, e)))?;
 
