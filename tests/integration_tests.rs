@@ -1,15 +1,14 @@
+use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum_test::TestServer;
 use lark_messager::{
     auth::AuthService,
-    config::Config,
     database::Database,
     handlers::AppState,
     lark::LarkClient,
     models::{CreateApiKeyRequest, LoginRequest, SendMessageRequest, VerifyRecipientRequest},
     routes::create_router,
 };
-use serde_json::{json, Value};
-use std::env;
+use serde_json::Value;
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
@@ -75,7 +74,7 @@ async fn test_login_invalid_credentials() {
     };
 
     let response = server.post("/auth/login").json(&login_request).await;
-    response.assert_status(401);
+    response.assert_status(StatusCode::UNAUTHORIZED);
 
     let body: Value = response.json();
     assert_eq!(body["error"], "Authentication failed");
@@ -91,7 +90,7 @@ async fn test_login_nonexistent_user() {
     };
 
     let response = server.post("/auth/login").json(&login_request).await;
-    response.assert_status(401);
+    response.assert_status(StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -105,7 +104,7 @@ async fn test_send_message_without_auth() {
     };
 
     let response = server.post("/messages/send").json(&message_request).await;
-    response.assert_status(401);
+    response.assert_status(StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -131,12 +130,15 @@ async fn test_send_message_with_jwt_auth() {
 
     let response = server
         .post("/messages/send")
-        .add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap())
+        .add_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        )
         .json(&message_request)
         .await;
 
     // Should fail with bad gateway due to invalid Lark credentials
-    response.assert_status(502);
+    response.assert_status(StatusCode::BAD_GATEWAY);
 }
 
 #[tokio::test]
@@ -162,11 +164,14 @@ async fn test_send_message_validation() {
 
     let response = server
         .post("/messages/send")
-        .add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap())
+        .add_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        )
         .json(&message_request)
         .await;
 
-    response.assert_status(400);
+    response.assert_status(StatusCode::BAD_REQUEST);
 
     // Test message too long
     let long_message = "a".repeat(10001);
@@ -178,11 +183,14 @@ async fn test_send_message_validation() {
 
     let response = server
         .post("/messages/send")
-        .add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap())
+        .add_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        )
         .json(&message_request)
         .await;
 
-    response.assert_status(400);
+    response.assert_status(StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -194,8 +202,11 @@ async fn test_verify_recipient_without_auth() {
         recipient_type: Some("email".to_string()),
     };
 
-    let response = server.post("/recipients/verify").json(&verify_request).await;
-    response.assert_status(401);
+    let response = server
+        .post("/recipients/verify")
+        .json(&verify_request)
+        .await;
+    response.assert_status(StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -220,11 +231,14 @@ async fn test_create_api_key_without_admin() {
 
     let response = server
         .post("/auth/api-keys")
-        .add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap())
+        .add_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        )
         .json(&api_key_request)
         .await;
 
-    response.assert_status(403);
+    response.assert_status(StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -244,7 +258,10 @@ async fn test_revoke_nonexistent_api_key() {
     let fake_key_id = Uuid::new_v4();
     let response = server
         .delete(&format!("/auth/api-keys/{}", fake_key_id))
-        .add_header("Authorization".parse().unwrap(), format!("Bearer {}", token).parse().unwrap())
+        .add_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        )
         .await;
 
     // Should fail with 403 (not admin) or 404 (key not found)
@@ -256,9 +273,11 @@ async fn test_cors_headers() {
     let server = create_test_server().await;
 
     let response = server
-        .options("/health")
-        .add_header("Origin".parse().unwrap(), "http://localhost:3000".parse().unwrap())
-        .add_header("Access-Control-Request-Method".parse().unwrap(), "GET".parse().unwrap())
+        .get("/health")
+        .add_header(
+            HeaderName::from_static("origin"),
+            HeaderValue::from_static("http://localhost:3000"),
+        )
         .await;
 
     // CORS preflight should be handled
@@ -277,11 +296,14 @@ async fn test_invalid_jwt_token() {
 
     let response = server
         .post("/messages/send")
-        .add_header("Authorization".parse().unwrap(), "Bearer invalid_token".parse().unwrap())
+        .add_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer invalid_token"),
+        )
         .json(&message_request)
         .await;
 
-    response.assert_status(401);
+    response.assert_status(StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -296,9 +318,12 @@ async fn test_malformed_auth_header() {
 
     let response = server
         .post("/messages/send")
-        .add_header("Authorization".parse().unwrap(), "InvalidFormat".parse().unwrap())
+        .add_header(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("InvalidFormat"),
+        )
         .json(&message_request)
         .await;
 
-    response.assert_status(401);
+    response.assert_status(StatusCode::UNAUTHORIZED);
 }
