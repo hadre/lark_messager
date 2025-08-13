@@ -12,12 +12,32 @@ use serde_json::Value;
 use uuid::Uuid;
 
 fn load_test_env() {
-    dotenvy::from_filename(".env.test.example").ok();
+    dotenvy::from_filename(".env.test").ok();
 }
 
-async fn create_test_server() -> TestServer {
+fn generate_unique_username() -> String {
+    format!(
+        "testuser_{}",
+        Uuid::new_v4().to_string().replace("-", "")[0..8].to_string()
+    )
+}
+
+fn generate_unique_key_name() -> String {
+    format!(
+        "TestKey_{}",
+        Uuid::new_v4().to_string().replace("-", "")[0..8].to_string()
+    )
+}
+
+struct TestContext {
+    server: TestServer,
+    username: String,
+    password: String,
+}
+
+async fn create_test_server() -> TestContext {
     load_test_env();
-    
+
     // Use MySQL test database
     // Note: This requires a running MySQL instance with test database
     let database_url = std::env::var("TEST_DATABASE_URL")
@@ -26,31 +46,37 @@ async fn create_test_server() -> TestServer {
     // Initialize database with migrations
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
-    // Create test user
-    let jwt_secret = std::env::var("TEST_JWT_SECRET")
-        .unwrap_or_else(|_| "test_jwt_secret".to_string());
+    // Create test user with unique username
+    let username = generate_unique_username();
+    let password = "testpass123";
+    let jwt_secret =
+        std::env::var("TEST_JWT_SECRET").unwrap_or_else(|_| "test_jwt_secret".to_string());
     let auth = AuthService::new(jwt_secret, db.clone());
-    let password_hash = auth.hash_password("testpass123").unwrap();
-    let _test_user = db.create_user("testuser", &password_hash).await.unwrap();
+    let password_hash = auth.hash_password(password).unwrap();
+    let _test_user = db.create_user(&username, &password_hash).await.unwrap();
 
     // Initialize Lark client with credentials from environment or defaults
-    let lark_app_id = std::env::var("TEST_LARK_APP_ID")
-        .unwrap_or_else(|_| "test_app_id".to_string());
-    let lark_app_secret = std::env::var("TEST_LARK_APP_SECRET")
-        .unwrap_or_else(|_| "test_app_secret".to_string());
+    let lark_app_id =
+        std::env::var("TEST_LARK_APP_ID").unwrap_or_else(|_| "test_app_id".to_string());
+    let lark_app_secret =
+        std::env::var("TEST_LARK_APP_SECRET").unwrap_or_else(|_| "test_app_secret".to_string());
     let lark = LarkClient::new(lark_app_id, lark_app_secret);
 
     let state = AppState { db, auth, lark };
     let app = create_router(state);
 
-    TestServer::new(app).unwrap()
+    TestContext {
+        server: TestServer::new(app).unwrap(),
+        username: username.clone(),
+        password: password.to_string(),
+    }
 }
 
 #[tokio::test]
 async fn test_health_check() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
-    let response = server.get("/health").await;
+    let response = ctx.server.get("/health").await;
     response.assert_status_ok();
 
     let body: Value = response.json();
@@ -61,14 +87,14 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn test_login_success() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     let login_request = LoginRequest {
-        username: "testuser".to_string(),
-        password: "testpass123".to_string(),
+        username: ctx.username.clone(),
+        password: ctx.password.clone(),
     };
 
-    let response = server.post("/auth/login").json(&login_request).await;
+    let response = ctx.server.post("/auth/login").json(&login_request).await;
     response.assert_status_ok();
 
     let body: Value = response.json();
@@ -78,14 +104,14 @@ async fn test_login_success() {
 
 #[tokio::test]
 async fn test_login_invalid_credentials() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     let login_request = LoginRequest {
-        username: "testuser".to_string(),
+        username: ctx.username.clone(),
         password: "wrongpassword".to_string(),
     };
 
-    let response = server.post("/auth/login").json(&login_request).await;
+    let response = ctx.server.post("/auth/login").json(&login_request).await;
     response.assert_status(StatusCode::UNAUTHORIZED);
 
     let body: Value = response.json();
@@ -94,20 +120,20 @@ async fn test_login_invalid_credentials() {
 
 #[tokio::test]
 async fn test_login_nonexistent_user() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     let login_request = LoginRequest {
-        username: "nonexistent".to_string(),
-        password: "testpass123".to_string(),
+        username: "nonexistent_user".to_string(),
+        password: ctx.password.clone(),
     };
 
-    let response = server.post("/auth/login").json(&login_request).await;
+    let response = ctx.server.post("/auth/login").json(&login_request).await;
     response.assert_status(StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn test_send_message_without_auth() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     let message_request = SendMessageRequest {
         recipient: "test@example.com".to_string(),
@@ -115,21 +141,21 @@ async fn test_send_message_without_auth() {
         recipient_type: Some("email".to_string()),
     };
 
-    let response = server.post("/messages/send").json(&message_request).await;
+    let response = ctx.server.post("/messages/send").json(&message_request).await;
     response.assert_status(StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn test_send_message_with_jwt_auth() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     // First login to get JWT token
     let login_request = LoginRequest {
-        username: "testuser".to_string(),
-        password: "testpass123".to_string(),
+        username: ctx.username.clone(),
+        password: ctx.password.clone(),
     };
 
-    let login_response = server.post("/auth/login").json(&login_request).await;
+    let login_response = ctx.server.post("/auth/login").json(&login_request).await;
     let login_body: Value = login_response.json();
     let token = login_body["token"].as_str().unwrap();
 
@@ -140,7 +166,7 @@ async fn test_send_message_with_jwt_auth() {
         recipient_type: Some("user_id".to_string()),
     };
 
-    let response = server
+    let response = ctx.server
         .post("/messages/send")
         .add_header(
             HeaderName::from_static("authorization"),
@@ -155,15 +181,15 @@ async fn test_send_message_with_jwt_auth() {
 
 #[tokio::test]
 async fn test_send_message_validation() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     // Login first
     let login_request = LoginRequest {
-        username: "testuser".to_string(),
-        password: "testpass123".to_string(),
+        username: ctx.username.clone(),
+        password: ctx.password.clone(),
     };
 
-    let login_response = server.post("/auth/login").json(&login_request).await;
+    let login_response = ctx.server.post("/auth/login").json(&login_request).await;
     let login_body: Value = login_response.json();
     let token = login_body["token"].as_str().unwrap();
 
@@ -174,7 +200,7 @@ async fn test_send_message_validation() {
         recipient_type: Some("email".to_string()),
     };
 
-    let response = server
+    let response = ctx.server
         .post("/messages/send")
         .add_header(
             HeaderName::from_static("authorization"),
@@ -193,7 +219,7 @@ async fn test_send_message_validation() {
         recipient_type: Some("email".to_string()),
     };
 
-    let response = server
+    let response = ctx.server
         .post("/messages/send")
         .add_header(
             HeaderName::from_static("authorization"),
@@ -207,14 +233,14 @@ async fn test_send_message_validation() {
 
 #[tokio::test]
 async fn test_verify_recipient_without_auth() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     let verify_request = VerifyRecipientRequest {
         recipient: "test@example.com".to_string(),
         recipient_type: Some("email".to_string()),
     };
 
-    let response = server
+    let response = ctx.server
         .post("/recipients/verify")
         .json(&verify_request)
         .await;
@@ -223,25 +249,26 @@ async fn test_verify_recipient_without_auth() {
 
 #[tokio::test]
 async fn test_create_api_key_without_admin() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     // Login as regular user
     let login_request = LoginRequest {
-        username: "testuser".to_string(),
-        password: "testpass123".to_string(),
+        username: ctx.username.clone(),
+        password: ctx.password.clone(),
     };
 
-    let login_response = server.post("/auth/login").json(&login_request).await;
+    let login_response = ctx.server.post("/auth/login").json(&login_request).await;
     let login_body: Value = login_response.json();
     let token = login_body["token"].as_str().unwrap();
 
     // Try to create API key (should fail - user is not admin)
+    let key_name = generate_unique_key_name();
     let api_key_request = CreateApiKeyRequest {
-        name: "Test API Key".to_string(),
+        name: key_name,
         permissions: "send_messages".to_string(),
     };
 
-    let response = server
+    let response = ctx.server
         .post("/auth/api-keys")
         .add_header(
             HeaderName::from_static("authorization"),
@@ -255,20 +282,20 @@ async fn test_create_api_key_without_admin() {
 
 #[tokio::test]
 async fn test_revoke_nonexistent_api_key() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     // Login as regular user
     let login_request = LoginRequest {
-        username: "testuser".to_string(),
-        password: "testpass123".to_string(),
+        username: ctx.username.clone(),
+        password: ctx.password.clone(),
     };
 
-    let login_response = server.post("/auth/login").json(&login_request).await;
+    let login_response = ctx.server.post("/auth/login").json(&login_request).await;
     let login_body: Value = login_response.json();
     let token = login_body["token"].as_str().unwrap();
 
     let fake_key_id = Uuid::new_v4();
-    let response = server
+    let response = ctx.server
         .delete(&format!("/auth/api-keys/{}", fake_key_id))
         .add_header(
             HeaderName::from_static("authorization"),
@@ -282,9 +309,9 @@ async fn test_revoke_nonexistent_api_key() {
 
 #[tokio::test]
 async fn test_cors_headers() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
-    let response = server
+    let response = ctx.server
         .get("/health")
         .add_header(
             HeaderName::from_static("origin"),
@@ -298,7 +325,7 @@ async fn test_cors_headers() {
 
 #[tokio::test]
 async fn test_invalid_jwt_token() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     let message_request = SendMessageRequest {
         recipient: "test@example.com".to_string(),
@@ -306,7 +333,7 @@ async fn test_invalid_jwt_token() {
         recipient_type: Some("email".to_string()),
     };
 
-    let response = server
+    let response = ctx.server
         .post("/messages/send")
         .add_header(
             HeaderName::from_static("authorization"),
@@ -320,7 +347,7 @@ async fn test_invalid_jwt_token() {
 
 #[tokio::test]
 async fn test_malformed_auth_header() {
-    let server = create_test_server().await;
+    let ctx = create_test_server().await;
 
     let message_request = SendMessageRequest {
         recipient: "test@example.com".to_string(),
@@ -328,7 +355,7 @@ async fn test_malformed_auth_header() {
         recipient_type: Some("email".to_string()),
     };
 
-    let response = server
+    let response = ctx.server
         .post("/messages/send")
         .add_header(
             HeaderName::from_static("authorization"),

@@ -96,6 +96,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_message) = match &self {
             AppError::Auth(_) => (StatusCode::UNAUTHORIZED, "Authentication failed"),
+            AppError::Jwt(_) => (StatusCode::UNAUTHORIZED, "Authentication failed"),
             AppError::Unauthorized(_) => (StatusCode::FORBIDDEN, "Access denied"),
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, "Invalid request"),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, "Resource not found"),
