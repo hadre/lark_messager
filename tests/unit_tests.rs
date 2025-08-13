@@ -1,12 +1,12 @@
-use lark_messager::{
-    auth::AuthService,
-    database::Database,
-    error::AppError,
-    lark::LarkClient,
-};
+use lark_messager::{auth::AuthService, database::Database, error::AppError, lark::LarkClient};
+
+fn load_test_env() {
+    dotenvy::from_filename(".env.test.example").ok();
+}
 
 #[tokio::test]
 async fn test_database_user_operations() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -32,6 +32,7 @@ async fn test_database_user_operations() {
 
 #[tokio::test]
 async fn test_database_api_key_operations() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -68,6 +69,7 @@ async fn test_database_api_key_operations() {
 
 #[tokio::test]
 async fn test_database_api_key_verification() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -113,6 +115,7 @@ async fn test_database_api_key_verification() {
 
 #[tokio::test]
 async fn test_database_message_logging() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -121,7 +124,13 @@ async fn test_database_message_logging() {
 
     // Test message logging
     let log = db
-        .log_message("user", &user_id, "recipient@example.com", "Test message", "sent")
+        .log_message(
+            "user",
+            &user_id,
+            "recipient@example.com",
+            "Test message",
+            "sent",
+        )
         .await
         .unwrap();
     assert_eq!(log.sender_type, "user");
@@ -142,6 +151,7 @@ async fn test_database_message_logging() {
 
 #[tokio::test]
 async fn test_auth_password_operations() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -151,7 +161,7 @@ async fn test_auth_password_operations() {
     let password = "testpassword123";
     let hash1 = auth.hash_password(password).unwrap();
     let hash2 = auth.hash_password(password).unwrap();
-    
+
     // Hashes should be different (due to salt)
     assert_ne!(hash1, hash2);
 
@@ -163,6 +173,7 @@ async fn test_auth_password_operations() {
 
 #[tokio::test]
 async fn test_auth_api_key_operations() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -171,7 +182,7 @@ async fn test_auth_api_key_operations() {
     // Test API key generation
     let key1 = auth.generate_api_key(32);
     let key2 = auth.generate_api_key(32);
-    
+
     assert_eq!(key1.len(), 32);
     assert_eq!(key2.len(), 32);
     assert_ne!(key1, key2);
@@ -184,6 +195,7 @@ async fn test_auth_api_key_operations() {
 
 #[tokio::test]
 async fn test_auth_jwt_operations() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -205,6 +217,7 @@ async fn test_auth_jwt_operations() {
 
 #[tokio::test]
 async fn test_auth_permission_parsing() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -226,10 +239,16 @@ async fn test_auth_permission_parsing() {
 
 #[tokio::test]
 async fn test_lark_client_recipient_verification() {
-    let lark = LarkClient::new("test_app_id".to_string(), "test_app_secret".to_string());
+    load_test_env();
+    let lark = LarkClient::new(
+        std::env::var("TEST_LARK_APP_ID").unwrap_or_else(|_| "test_app_id".to_string()),
+        std::env::var("TEST_LARK_APP_SECRET").unwrap_or_else(|_| "test_app_secret".to_string()),
+    );
 
     // Test user ID recognition
-    let result = lark.verify_recipient("ou_12345678901234567890123456", Some("user_id")).await;
+    let result = lark
+        .verify_recipient("ou_12345678901234567890123456", Some("user_id"))
+        .await;
     // This will fail due to invalid credentials, but we can test the logic
     assert!(result.is_err() || result.unwrap().is_some());
 
@@ -241,10 +260,16 @@ async fn test_lark_client_recipient_verification() {
 async fn test_error_types() {
     // Test that our error types work correctly
     let auth_error = AppError::Auth("Test auth error".to_string());
-    assert_eq!(auth_error.to_string(), "Authentication failed: Test auth error");
+    assert_eq!(
+        auth_error.to_string(),
+        "Authentication failed: Test auth error"
+    );
 
     let validation_error = AppError::Validation("Test validation error".to_string());
-    assert_eq!(validation_error.to_string(), "Validation error: Test validation error");
+    assert_eq!(
+        validation_error.to_string(),
+        "Validation error: Test validation error"
+    );
 
     let not_found_error = AppError::NotFound("Test resource".to_string());
     assert_eq!(not_found_error.to_string(), "Not found: Test resource");
@@ -252,6 +277,7 @@ async fn test_error_types() {
 
 #[tokio::test]
 async fn test_database_constraints() {
+    load_test_env();
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
@@ -263,7 +289,12 @@ async fn test_database_constraints() {
 
     // Test unique API key hash constraint
     let user = db.create_user("testuser2", "hash").await.unwrap();
-    let _key1 = db.create_api_key("keyhash", "Key 1", "perms", &user.id).await.unwrap();
-    let result = db.create_api_key("keyhash", "Key 2", "perms", &user.id).await;
+    let _key1 = db
+        .create_api_key("keyhash", "Key 1", "perms", &user.id)
+        .await
+        .unwrap();
+    let result = db
+        .create_api_key("keyhash", "Key 2", "perms", &user.id)
+        .await;
     assert!(result.is_err()); // Should fail due to unique constraint
 }

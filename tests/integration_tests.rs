@@ -11,7 +11,13 @@ use lark_messager::{
 use serde_json::Value;
 use uuid::Uuid;
 
+fn load_test_env() {
+    dotenvy::from_filename(".env.test.example").ok();
+}
+
 async fn create_test_server() -> TestServer {
+    load_test_env();
+    
     // Use MySQL test database
     // Note: This requires a running MySQL instance with test database
     let database_url = std::env::var("TEST_DATABASE_URL")
@@ -21,12 +27,18 @@ async fn create_test_server() -> TestServer {
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Create test user
-    let auth = AuthService::new("test_jwt_secret".to_string(), db.clone());
+    let jwt_secret = std::env::var("TEST_JWT_SECRET")
+        .unwrap_or_else(|_| "test_jwt_secret".to_string());
+    let auth = AuthService::new(jwt_secret, db.clone());
     let password_hash = auth.hash_password("testpass123").unwrap();
     let _test_user = db.create_user("testuser", &password_hash).await.unwrap();
 
-    // Initialize Lark client with dummy credentials
-    let lark = LarkClient::new("test_app_id".to_string(), "test_app_secret".to_string());
+    // Initialize Lark client with credentials from environment or defaults
+    let lark_app_id = std::env::var("TEST_LARK_APP_ID")
+        .unwrap_or_else(|_| "test_app_id".to_string());
+    let lark_app_secret = std::env::var("TEST_LARK_APP_SECRET")
+        .unwrap_or_else(|_| "test_app_secret".to_string());
+    let lark = LarkClient::new(lark_app_id, lark_app_secret);
 
     let state = AppState { db, auth, lark };
     let app = create_router(state);
