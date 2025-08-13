@@ -4,46 +4,53 @@
 
 ## 前置要求
 
-- Docker 和 Docker Compose
 - Rust 和 Cargo
+- 可访问的 MySQL 数据库实例
 - MySQL 客户端工具（可选，用于调试）
 
-## 快速运行测试
+## 环境配置
 
-使用提供的脚本自动启动测试数据库并运行所有测试：
+### 1. 准备测试数据库
+
+确保您有一个可用的 MySQL 数据库用于测试。建议创建一个专门的测试数据库：
+
+```sql
+CREATE DATABASE test_lark_messager;
+-- 或者使用您现有的测试数据库
+```
+
+### 2. 设置环境变量
+
+方式一：直接设置环境变量
+```bash
+export TEST_DATABASE_URL="mysql://username:password@hostname:port/database_name"
+```
+
+方式二：使用环境配置文件
+```bash
+# 复制示例配置文件
+cp .env.test.example .env.test
+# 编辑配置文件，设置您的数据库连接信息
+# 然后在运行测试前加载配置
+source .env.test
+```
+
+例如：
+```bash
+export TEST_DATABASE_URL="mysql://root:password@localhost:3306/test_lark_messager"
+```
+
+## 运行测试
+
+### 快速运行测试
+
+使用提供的脚本运行所有测试：
 
 ```bash
 ./scripts/run_tests.sh
 ```
 
-这个脚本会：
-1. 启动测试用的 MySQL 容器（端口 3307）
-2. 等待数据库就绪
-3. 运行所有测试
-4. 清理测试环境
-
-## 手动运行测试
-
-### 1. 启动测试数据库
-
-```bash
-docker-compose -f docker-compose.test.yml up -d test-mysql
-```
-
-### 2. 等待数据库就绪
-
-```bash
-# 检查数据库是否就绪
-docker exec $(docker-compose -f docker-compose.test.yml ps -q test-mysql) mysqladmin ping -h "localhost"
-```
-
-### 3. 设置环境变量
-
-```bash
-export TEST_DATABASE_URL="mysql://root:password@localhost:3307/test_lark_messager"
-```
-
-### 4. 运行测试
+### 手动运行测试
 
 ```bash
 # 运行所有测试
@@ -58,21 +65,6 @@ cargo test --test integration_tests
 # 运行特定测试
 cargo test test_database_user_operations
 ```
-
-### 5. 清理环境
-
-```bash
-docker-compose -f docker-compose.test.yml down
-```
-
-## 测试数据库配置
-
-测试数据库配置：
-- **主机**: localhost
-- **端口**: 3307 (避免与开发数据库冲突)
-- **数据库名**: test_lark_messager
-- **用户名**: root
-- **密码**: password
 
 ## 测试类型
 
@@ -98,35 +90,45 @@ docker-compose -f docker-compose.test.yml down
 
 ### 数据库连接失败
 
-1. 确认 Docker 容器正在运行：
+1. 检查环境变量是否正确设置：
    ```bash
-   docker ps | grep test-mysql
+   echo $TEST_DATABASE_URL
    ```
 
-2. 检查数据库日志：
+2. 手动测试数据库连接：
    ```bash
-   docker-compose -f docker-compose.test.yml logs test-mysql
+   mysql -h hostname -P port -u username -ppassword database_name
    ```
 
-3. 手动测试数据库连接：
+3. 确认数据库服务正在运行：
    ```bash
-   mysql -h 127.0.0.1 -P 3307 -u root -ppassword test_lark_messager
+   # 检查 MySQL 服务状态
+   mysqladmin -h hostname -P port -u username -ppassword ping
    ```
-
-### 端口冲突
-
-如果端口 3307 被占用，可以修改 `docker-compose.test.yml` 中的端口映射。
 
 ### 权限问题
 
-确保测试脚本有执行权限：
-```bash
-chmod +x scripts/run_tests.sh
+1. 确保测试脚本有执行权限：
+   ```bash
+   chmod +x scripts/run_tests.sh
+   ```
+
+2. 确认数据库用户有足够权限：
+   - CREATE/DROP 数据库权限
+   - CREATE/DROP 表权限
+   - INSERT/UPDATE/DELETE 权限
+
+### 数据库迁移问题
+
+如果遇到迁移相关错误，可以手动重置测试数据库：
+```sql
+DROP DATABASE IF EXISTS test_lark_messager;
+CREATE DATABASE test_lark_messager;
 ```
 
 ## 注意事项
 
-1. **数据隔离**: 每个测试都使用独立的测试数据库，避免测试间相互影响
-2. **清理策略**: 测试运行后会自动清理数据库状态
-3. **并发测试**: 测试设计为可以并发运行，但共享同一个测试数据库实例
-4. **环境变量**: 可以通过 `TEST_DATABASE_URL` 环境变量自定义数据库连接
+1. **数据隔离**: 建议使用专门的测试数据库，避免与开发/生产数据混合
+2. **清理策略**: 测试会自动清理创建的数据，但不会删除数据库本身
+3. **并发测试**: 测试设计为可以并发运行，但请确保数据库支持并发连接
+4. **环境变量**: 必须正确设置 `TEST_DATABASE_URL` 环境变量才能运行测试

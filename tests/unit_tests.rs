@@ -8,7 +8,7 @@ use lark_messager::{
 #[tokio::test]
 async fn test_database_user_operations() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Test user creation
@@ -33,7 +33,7 @@ async fn test_database_user_operations() {
 #[tokio::test]
 async fn test_database_api_key_operations() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Create a user first
@@ -69,7 +69,7 @@ async fn test_database_api_key_operations() {
 #[tokio::test]
 async fn test_database_api_key_verification() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db.clone());
 
@@ -114,7 +114,7 @@ async fn test_database_api_key_verification() {
 #[tokio::test]
 async fn test_database_message_logging() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     let user_id = uuid::Uuid::new_v4();
@@ -143,7 +143,7 @@ async fn test_database_message_logging() {
 #[tokio::test]
 async fn test_auth_password_operations() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db);
 
@@ -164,7 +164,7 @@ async fn test_auth_password_operations() {
 #[tokio::test]
 async fn test_auth_api_key_operations() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db);
 
@@ -185,7 +185,7 @@ async fn test_auth_api_key_operations() {
 #[tokio::test]
 async fn test_auth_jwt_operations() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db.clone());
 
@@ -206,7 +206,7 @@ async fn test_auth_jwt_operations() {
 #[tokio::test]
 async fn test_auth_permission_parsing() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db);
 
@@ -253,7 +253,7 @@ async fn test_error_types() {
 #[tokio::test]
 async fn test_database_constraints() {
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Test unique username constraint

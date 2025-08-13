@@ -15,7 +15,7 @@ async fn create_test_server() -> TestServer {
     // Use MySQL test database
     // Note: This requires a running MySQL instance with test database
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
 
     // Initialize database with migrations
     let db = Database::new_with_migrations(&database_url).await.unwrap();

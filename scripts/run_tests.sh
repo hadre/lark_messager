@@ -1,28 +1,19 @@
 #!/bin/bash
 
 # Test script for Lark Messager
-# This script starts a test MySQL database and runs all tests
+# This script runs all tests using the existing MySQL database
 
 set -e
 
-echo "Starting test MySQL database..."
-docker-compose -f docker-compose.test.yml up -d test-mysql
-
-echo "Waiting for MySQL to be ready..."
-until docker exec $(docker-compose -f docker-compose.test.yml ps -q test-mysql) mysqladmin ping -h "localhost" --silent; do
-    echo "Waiting for MySQL..."
-    sleep 2
-done
-
-echo "MySQL is ready!"
-
-# Set test database URL
-export TEST_DATABASE_URL="mysql://root:password@localhost:3307/test_lark_messager"
+# Check if TEST_DATABASE_URL is set
+if [ -z "$TEST_DATABASE_URL" ]; then
+    echo "Warning: TEST_DATABASE_URL not set. Using default configuration."
+    echo "Please set TEST_DATABASE_URL environment variable to point to your test database."
+    echo "Example: export TEST_DATABASE_URL='mysql://user:password@localhost:3306/test_lark_messager'"
+    echo ""
+fi
 
 echo "Running tests..."
 cargo test
-
-echo "Cleaning up..."
-docker-compose -f docker-compose.test.yml down
 
 echo "Tests completed!"
