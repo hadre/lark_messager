@@ -1,7 +1,22 @@
 use lark_messager::{auth::AuthService, database::Database, error::AppError, lark::LarkClient};
+use uuid::Uuid;
 
 fn load_test_env() {
-    dotenvy::from_filename(".env.test.example").ok();
+    dotenvy::from_filename(".env.test").ok();
+}
+
+fn generate_unique_username() -> String {
+    format!(
+        "testuser_{}",
+        Uuid::new_v4().to_string().replace("-", "")[0..8].to_string()
+    )
+}
+
+fn generate_unique_key_hash() -> String {
+    format!(
+        "keyhash_{}",
+        Uuid::new_v4().to_string().replace("-", "")[0..8].to_string()
+    )
 }
 
 #[tokio::test]
@@ -11,22 +26,24 @@ async fn test_database_user_operations() {
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
+    let username = generate_unique_username();
+
     // Test user creation
-    let user = db.create_user("testuser", "password_hash").await.unwrap();
-    assert_eq!(user.username, "testuser");
+    let user = db.create_user(&username, "password_hash").await.unwrap();
+    assert_eq!(user.username, username);
     assert_eq!(user.password_hash, "password_hash");
 
     // Test getting user by username
-    let retrieved_user = db.get_user_by_username("testuser").await.unwrap().unwrap();
+    let retrieved_user = db.get_user_by_username(&username).await.unwrap().unwrap();
     assert_eq!(retrieved_user.id, user.id);
-    assert_eq!(retrieved_user.username, "testuser");
+    assert_eq!(retrieved_user.username, username);
 
     // Test getting user by ID
     let retrieved_user_by_id = db.get_user_by_id(&user.id).await.unwrap().unwrap();
-    assert_eq!(retrieved_user_by_id.username, "testuser");
+    assert_eq!(retrieved_user_by_id.username, username);
 
     // Test getting non-existent user
-    let non_existent = db.get_user_by_username("nonexistent").await.unwrap();
+    let non_existent = db.get_user_by_username("nonexistent_user").await.unwrap();
     assert!(non_existent.is_none());
 }
 
@@ -37,12 +54,15 @@ async fn test_database_api_key_operations() {
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
+    let username = generate_unique_username();
+    let key_hash = generate_unique_key_hash();
+
     // Create a user first
-    let user = db.create_user("testuser", "password_hash").await.unwrap();
+    let user = db.create_user(&username, "password_hash").await.unwrap();
 
     // Test API key creation
     let api_key = db
-        .create_api_key("key_hash", "Test Key", "send_messages", &user.id)
+        .create_api_key(&key_hash, "Test Key", "send_messages", &user.id)
         .await
         .unwrap();
     assert_eq!(api_key.name, "Test Key");
@@ -50,7 +70,7 @@ async fn test_database_api_key_operations() {
     assert_eq!(api_key.created_by, user.id);
 
     // Test getting API key by hash
-    let retrieved_key = db.get_api_key_by_hash("key_hash").await.unwrap().unwrap();
+    let retrieved_key = db.get_api_key_by_hash(&key_hash).await.unwrap().unwrap();
     assert_eq!(retrieved_key.id, api_key.id);
 
     // Test revoking API key
@@ -58,11 +78,11 @@ async fn test_database_api_key_operations() {
     assert!(revoked);
 
     // Test that revoked key is not returned
-    let revoked_key = db.get_api_key_by_hash("key_hash").await.unwrap();
+    let revoked_key = db.get_api_key_by_hash(&key_hash).await.unwrap();
     assert!(revoked_key.is_none());
 
     // Test revoking non-existent key
-    let fake_id = uuid::Uuid::new_v4();
+    let fake_id = Uuid::new_v4();
     let not_revoked = db.revoke_api_key(&fake_id).await.unwrap();
     assert!(!not_revoked);
 }
@@ -75,8 +95,9 @@ async fn test_database_api_key_verification() {
     let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db.clone());
 
+    let username = generate_unique_username();
     // Create a user first
-    let user = db.create_user("testuser", "password_hash").await.unwrap();
+    let user = db.create_user(&username, "password_hash").await.unwrap();
 
     // Generate a raw API key and its hash
     let raw_api_key = auth.generate_api_key(32);
@@ -120,7 +141,7 @@ async fn test_database_message_logging() {
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
-    let user_id = uuid::Uuid::new_v4();
+    let user_id = Uuid::new_v4();
 
     // Test message logging
     let log = db
@@ -144,9 +165,9 @@ async fn test_database_message_logging() {
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].id, log.id);
 
-    // Test getting all logs (no sender filter)
+    // Test getting all logs (no sender filter) - should have at least our log
     let all_logs = db.get_message_logs(None, Some(10)).await.unwrap();
-    assert_eq!(all_logs.len(), 1);
+    assert!(all_logs.len() >= 1);
 }
 
 #[tokio::test]
@@ -155,7 +176,7 @@ async fn test_auth_password_operations() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
-    let auth = AuthService::new("test_secret".to_string(), db);
+    let auth = AuthService::new("test_secret".to_string(), db.clone());
 
     // Test password hashing
     let password = "testpassword123";
@@ -177,7 +198,7 @@ async fn test_auth_api_key_operations() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
-    let auth = AuthService::new("test_secret".to_string(), db);
+    let auth = AuthService::new("test_secret".to_string(), db.clone());
 
     // Test API key generation
     let key1 = auth.generate_api_key(32);
@@ -201,8 +222,9 @@ async fn test_auth_jwt_operations() {
     let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db.clone());
 
+    let username = generate_unique_username();
     // Create a test user
-    let user = db.create_user("testuser", "hash").await.unwrap();
+    let user = db.create_user(&username, "hash").await.unwrap();
 
     // Test JWT generation
     let (token, expires_at) = auth.generate_jwt_token(&user).unwrap();
@@ -221,7 +243,7 @@ async fn test_auth_permission_parsing() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
-    let auth = AuthService::new("test_secret".to_string(), db);
+    let auth = AuthService::new("test_secret".to_string(), db.clone());
 
     // Test permission parsing
     let permissions = auth.parse_permissions("send_messages,admin,read_logs");
@@ -282,19 +304,23 @@ async fn test_database_constraints() {
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string());
     let db = Database::new_with_migrations(&database_url).await.unwrap();
 
+    let username = generate_unique_username();
+    let key_hash = generate_unique_key_hash();
+
     // Test unique username constraint
-    let _user1 = db.create_user("testuser", "hash1").await.unwrap();
-    let result = db.create_user("testuser", "hash2").await;
+    let _user1 = db.create_user(&username, "hash1").await.unwrap();
+    let result = db.create_user(&username, "hash2").await;
     assert!(result.is_err()); // Should fail due to unique constraint
 
     // Test unique API key hash constraint
-    let user = db.create_user("testuser2", "hash").await.unwrap();
+    let username2 = generate_unique_username();
+    let user = db.create_user(&username2, "hash").await.unwrap();
     let _key1 = db
-        .create_api_key("keyhash", "Key 1", "perms", &user.id)
+        .create_api_key(&key_hash, "Key 1", "perms", &user.id)
         .await
         .unwrap();
     let result = db
-        .create_api_key("keyhash", "Key 2", "perms", &user.id)
+        .create_api_key(&key_hash, "Key 2", "perms", &user.id)
         .await;
     assert!(result.is_err()); // Should fail due to unique constraint
 }
