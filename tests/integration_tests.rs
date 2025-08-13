@@ -9,16 +9,16 @@ use lark_messager::{
     routes::create_router,
 };
 use serde_json::Value;
-use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 async fn create_test_server() -> TestServer {
-    // Create a temporary database file
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
+    // Use MySQL test database
+    // Note: This requires a running MySQL instance with test database
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
 
-    // Initialize database
-    let db = Database::new(&database_url).await.unwrap();
+    // Initialize database with migrations
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Create test user
     let auth = AuthService::new("test_jwt_secret".to_string(), db.clone());

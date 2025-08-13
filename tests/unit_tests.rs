@@ -4,13 +4,12 @@ use lark_messager::{
     error::AppError,
     lark::LarkClient,
 };
-use tempfile::NamedTempFile;
 
 #[tokio::test]
 async fn test_database_user_operations() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Test user creation
     let user = db.create_user("testuser", "password_hash").await.unwrap();
@@ -33,9 +32,9 @@ async fn test_database_user_operations() {
 
 #[tokio::test]
 async fn test_database_api_key_operations() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Create a user first
     let user = db.create_user("testuser", "password_hash").await.unwrap();
@@ -68,10 +67,55 @@ async fn test_database_api_key_operations() {
 }
 
 #[tokio::test]
+async fn test_database_api_key_verification() {
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
+    let auth = AuthService::new("test_secret".to_string(), db.clone());
+
+    // Create a user first
+    let user = db.create_user("testuser", "password_hash").await.unwrap();
+
+    // Generate a raw API key and its hash
+    let raw_api_key = auth.generate_api_key(32);
+    let key_hash = auth.hash_api_key(&raw_api_key).unwrap();
+
+    // Create API key in database with the hash
+    let api_key = db
+        .create_api_key(&key_hash, "Test Key", "send_messages", &user.id)
+        .await
+        .unwrap();
+
+    // Test finding API key by verification with correct key
+    let found_key = db
+        .find_api_key_by_verification(&raw_api_key, &auth)
+        .await
+        .unwrap();
+    assert!(found_key.is_some());
+    assert_eq!(found_key.unwrap().id, api_key.id);
+
+    // Test finding API key by verification with wrong key
+    let wrong_key = auth.generate_api_key(32);
+    let not_found = db
+        .find_api_key_by_verification(&wrong_key, &auth)
+        .await
+        .unwrap();
+    assert!(not_found.is_none());
+
+    // Revoke the key and test again
+    let _revoked = db.revoke_api_key(&api_key.id).await.unwrap();
+    let revoked_key = db
+        .find_api_key_by_verification(&raw_api_key, &auth)
+        .await
+        .unwrap();
+    assert!(revoked_key.is_none());
+}
+
+#[tokio::test]
 async fn test_database_message_logging() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     let user_id = uuid::Uuid::new_v4();
 
@@ -98,9 +142,9 @@ async fn test_database_message_logging() {
 
 #[tokio::test]
 async fn test_auth_password_operations() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db);
 
     // Test password hashing
@@ -119,9 +163,9 @@ async fn test_auth_password_operations() {
 
 #[tokio::test]
 async fn test_auth_api_key_operations() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db);
 
     // Test API key generation
@@ -140,9 +184,9 @@ async fn test_auth_api_key_operations() {
 
 #[tokio::test]
 async fn test_auth_jwt_operations() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db.clone());
 
     // Create a test user
@@ -161,9 +205,9 @@ async fn test_auth_jwt_operations() {
 
 #[tokio::test]
 async fn test_auth_permission_parsing() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
     let auth = AuthService::new("test_secret".to_string(), db);
 
     // Test permission parsing
@@ -208,9 +252,9 @@ async fn test_error_types() {
 
 #[tokio::test]
 async fn test_database_constraints() {
-    let db_file = NamedTempFile::new().unwrap();
-    let database_url = format!("sqlite:{}", db_file.path().display());
-    let db = Database::new(&database_url).await.unwrap();
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root:password@localhost:3307/test_lark_messager".to_string());
+    let db = Database::new_with_migrations(&database_url).await.unwrap();
 
     // Test unique username constraint
     let _user1 = db.create_user("testuser", "hash1").await.unwrap();
