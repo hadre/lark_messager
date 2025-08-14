@@ -83,6 +83,20 @@ curl -H "X-API-Key: <api_key>" \
   http://localhost:8080/messages/send
 ```
 
+#### Initial Setup (Creating First Admin User and API Key)
+
+Since API keys can only be created by admin API keys (not user tokens), you need to bootstrap the system:
+
+```bash
+# 1. Create initial admin user
+cargo run --bin generate_credentials -- --user admin --password admin123
+
+# 2. Create initial admin API key (using the user ID from step 1)
+cargo run --bin generate_credentials -- --api-key --name "bootstrap-admin" --created-by "user-id-from-step-1"
+```
+
+The `generate_credentials` utility will output SQL statements and the actual API key. Save the API key securely as it cannot be retrieved later.
+
 ### Endpoints
 
 #### Health Check
@@ -93,8 +107,8 @@ GET /health
 #### Authentication
 ```bash
 POST /auth/login                    # User login
-POST /auth/api-keys                 # Create API key (admin only)
-DELETE /auth/api-keys/{id}          # Revoke API key (admin only)
+POST /auth/api-keys                 # Create API key (requires admin API key, NOT user token)
+DELETE /auth/api-keys/{id}          # Revoke API key (requires admin API key, NOT user token)
 ```
 
 #### Messages

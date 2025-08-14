@@ -93,16 +93,18 @@ curl -s -X POST "$BASE_URL/messages/send-group" \
   }' | jq .
 echo
 
-# Create API key (requires admin permissions)
-echo "6. Create API Key (requires admin permissions):"
-echo "Note: This will likely fail unless the user has admin permissions"
-curl -s -X POST "$BASE_URL/auth/api-keys" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Test API Key",
-    "permissions": "send_messages"
-  }' | jq .
+# Note about API key creation
+echo "6. About API Key Creation:"
+echo "API keys can only be created by admin API keys, NOT by user JWT tokens."
+echo "To create your first admin API key, use the generate_credentials utility:"
+echo "  cargo run --bin generate_credentials -- --user admin --password yourpass"
+echo "  cargo run --bin generate_credentials -- --api-key --name \"admin-key\" --created-by \"user-id-from-above\""
+echo
+echo "Once you have an admin API key, you can create new API keys like this:"
+echo "curl -X POST '$BASE_URL/auth/api-keys' \\"
+echo "  -H 'X-API-Key: your-admin-api-key' \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{\"name\": \"New API Key\", \"permissions\": \"send_messages\"}'"
 echo
 
 # Test with invalid authentication
