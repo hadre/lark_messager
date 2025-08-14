@@ -108,7 +108,7 @@ async fn generate_api_key_credentials(
         .map_err(|e| format!("Failed to hash API key: {}", e))?;
 
     // Default permissions for API keys
-    let permissions = "send_message,verify_recipient";
+    let permissions = "send_message,verify_recipient,admin";
 
     // Create API key in database
     let api_key_record = database
@@ -296,7 +296,7 @@ async fn main() -> Result<(), String> {
         Config::from_env().map_err(|e| format!("Failed to load configuration: {}", e))?;
 
     // Initialize database connection
-    let database = Database::new_with_migrations(&app_config.database_url)
+    let database = Database::new(&app_config.database_url)
         .await
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
