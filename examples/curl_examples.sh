@@ -61,21 +61,35 @@ curl -s -X POST "$BASE_URL/messages/send" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "recipient": "test_user_id",
+    "recipient": "test@example.com",
     "message": "Hello from Lark Messager API!",
-    "recipient_type": "user_id"
+    "recipient_type": "email"
   }' | jq .
 echo
 
-# Send message to group (will likely fail with invalid Lark credentials)
-echo "5. Send Message to Group:"
+# Send message to group using chat_id
+echo "5a. Send Message to Group (using chat_id):"
 echo "Note: This will likely fail if Lark credentials are not properly configured"
 curl -s -X POST "$BASE_URL/messages/send-group" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "chat_id": "oc_test_chat_id",
-    "message": "Hello group from Lark Messager API!"
+    "recipient": "oc_test_chat_id",
+    "message": "Hello group from Lark Messager API!",
+    "recipient_type": "chat_id"
+  }' | jq .
+echo
+
+# Send message to group using chat name
+echo "5b. Send Message to Group (using chat name):"
+echo "Note: This will likely fail if Lark credentials are not properly configured"
+curl -s -X POST "$BASE_URL/messages/send-group" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipient": "技术讨论群",
+    "message": "Hello group from Lark Messager API!",
+    "recipient_type": "chat_name"
   }' | jq .
 echo
 

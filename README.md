@@ -120,12 +120,24 @@ curl -X POST http://localhost:8080/messages/send \
 
 #### Send Message to Group
 ```bash
+# Using chat_id
 curl -X POST http://localhost:8080/messages/send-group \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "chat_id": "oc_xxxxxxxxxx",
-    "message": "Hello everyone!"
+    "recipient": "oc_xxxxxxxxxx",
+    "message": "Hello everyone!",
+    "recipient_type": "chat_id"
+  }'
+
+# Using chat name
+curl -X POST http://localhost:8080/messages/send-group \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipient": "技术讨论群",
+    "message": "Hello everyone!",
+    "recipient_type": "chat_name"
   }'
 ```
 
@@ -159,10 +171,15 @@ curl -X POST http://localhost:8080/recipients/verify \
 
 The service supports multiple recipient identification methods:
 
-- `user_id`: Lark user ID (ou_xxx, on_xxx)
-- `email`: Email address
-- `mobile`: Phone number
-- `chat_id`: Group chat ID (oc_xxx)
+#### For Individual Messages (`/messages/send`)
+- `user_id`: Lark user open_id (obtained from email/mobile lookup)
+- `email`: Email address (automatically converted to open_id)
+- `mobile`: Phone number (automatically converted to open_id)
+- `auto`: Auto-detect based on format (default)
+
+#### For Group Messages (`/messages/send-group`)
+- `chat_id`: Group chat ID (oc_xxx, ou_xxx)
+- `chat_name`: Group chat name (automatically converted to chat_id)
 - `auto`: Auto-detect based on format (default)
 
 ## Development
