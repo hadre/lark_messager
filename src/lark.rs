@@ -11,9 +11,9 @@
  * - 智能识别接收者类型并验证
  *
  * 支持的接收者类型：
- * - user_id: 用户开放 ID
- * - email: 邮箱地址（自动转换为 user_id）
- * - mobile: 手机号（自动转换为 user_id）
+ * - user_id: 用户开放 ID (open_id)
+ * - email: 邮箱地址（自动转换为 open_id）
+ * - mobile: 手机号（自动转换为 open_id）
  * - chat_id: 群聊 ID
  * - chat_name: 群聊名称（自动转换为 chat_id）
  * - auto: 自动识别类型
@@ -132,7 +132,7 @@ struct BatchGetIdData {
 /// 用户信息结构体
 #[derive(Debug, Serialize, Deserialize)]
 struct UserInfo {
-    /// 用户 ID
+    /// 用户开放 ID (open_id)
     user_id: String,
     /// 邮箱地址
     email: Option<String>,
@@ -389,7 +389,7 @@ impl LarkClient {
     /// 向指定的飞书用户发送文本消息。
     ///
     /// # 参数
-    /// - `user_id`: 目标用户的 user_id
+    /// - `user_id`: 目标用户的开放 ID (open_id)
     /// - `message`: 要发送的消息内容
     ///
     /// # 返回
@@ -429,7 +429,7 @@ impl LarkClient {
             .post(&url)
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Content-Type", "application/json; charset=utf-8")
-            .query(&[("receive_id_type", "user_id")])
+            .query(&[("receive_id_type", "open_id")])
             .json(&request_body)
             .send()
             .await?;
@@ -540,16 +540,16 @@ impl LarkClient {
         Ok(message_id)
     }
 
-    /// 通过邮箱获取用户 ID
+    /// 通过邮箱获取用户开放 ID
     ///
-    /// 使用邮箱地址查找对应的飞书用户 ID。
-    /// 适用于知道用户邮箱但不知道 user_id 的情况。
+    /// 使用邮箱地址查找对应的飞书用户开放 ID (open_id)。
+    /// 适用于知道用户邮箱但不知道 open_id 的情况。
     ///
     /// # 参数
     /// - `email`: 用户的邮箱地址
     ///
     /// # 返回
-    /// - `Some(user_id)`: 找到对应的用户 ID
+    /// - `Some(open_id)`: 找到对应的用户开放 ID
     /// - `None`: 没有找到对应的用户
     ///
     /// # 限制
@@ -575,6 +575,7 @@ impl LarkClient {
             .post(&url)
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Content-Type", "application/json; charset=utf-8")
+            .query(&[("user_id_type", "open_id")])
             .json(&request_body)
             .send()
             .await?;
@@ -607,16 +608,16 @@ impl LarkClient {
         Ok(user_id)
     }
 
-    /// 通过手机号获取用户 ID
+    /// 通过手机号获取用户开放 ID
     ///
-    /// 使用手机号查找对应的飞书用户 ID。
-    /// 适用于知道用户手机号但不知道 user_id 的情况。
+    /// 使用手机号查找对应的飞书用户开放 ID (open_id)。
+    /// 适用于知道用户手机号但不知道 open_id 的情况。
     ///
     /// # 参数
     /// - `mobile`: 用户的手机号（可包含国家代码）
     ///
     /// # 返回
-    /// - `Some(user_id)`: 找到对应的用户 ID
+    /// - `Some(open_id)`: 找到对应的用户开放 ID
     /// - `None`: 没有找到对应的用户
     ///
     /// # 手机号格式
@@ -644,6 +645,7 @@ impl LarkClient {
             .post(&url)
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Content-Type", "application/json; charset=utf-8")
+            .query(&[("user_id_type", "open_id")])
             .json(&request_body)
             .send()
             .await?;
