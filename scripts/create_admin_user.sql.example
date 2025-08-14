@@ -13,8 +13,8 @@ VALUES (
     '01234567-89ab-cdef-0123-456789abcdef',
     'admin',
     '$argon2id$v=19$m=19456,t=2,p=1$REPLACE_WITH_ACTUAL_HASH',
-    datetime('now'),
-    datetime('now')
+    now(),
+    now()
 );
 
 -- Create an API key for the admin user (optional)
@@ -26,6 +26,6 @@ VALUES (
     'Test Admin API Key',
     'admin,send_messages',
     '01234567-89ab-cdef-0123-456789abcdef',
-    datetime('now'),
+    now(),
     NULL
 );

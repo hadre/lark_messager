@@ -67,6 +67,12 @@ fn hash_api_key(api_key: &str) -> Result<String, String> {
     hash_password(api_key)
 }
 
+/// Escape a string for safe SQL insertion
+/// Escapes single quotes and backslashes to prevent SQL injection
+fn escape_sql_string(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('\'', "''")
+}
+
 /// Generate user credentials (username + hashed password)
 fn generate_user_credentials(username: &str, password: &str) -> Result<(), String> {
     let user_id = Uuid::new_v4();
@@ -82,7 +88,7 @@ fn generate_user_credentials(username: &str, password: &str) -> Result<(), Strin
     println!("SQL Insert Statement:");
     println!(
         "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ('{}', '{}', '{}', '{}', '{}');",
-        user_id, username, password_hash, now, now
+        user_id, escape_sql_string(username), escape_sql_string(&password_hash), now, now
     );
     println!();
 
@@ -111,7 +117,7 @@ fn generate_api_key_credentials(name: &str, length: usize) -> Result<(), String>
     );
     println!(
         "INSERT INTO api_keys (id, key_hash, name, permissions, created_by, created_at, revoked_at) VALUES ('{}', '{}', '{}', '{}', '<CREATED_BY_USER_ID>', '{}', NULL);",
-        api_key_id, key_hash, name, permissions, now
+        api_key_id, escape_sql_string(&key_hash), escape_sql_string(name), escape_sql_string(permissions), now
     );
     println!();
     println!("⚠️  IMPORTANT: Save the API key above securely. It cannot be retrieved later!");
@@ -310,5 +316,30 @@ mod tests {
         assert!(argon2
             .verify_password(api_key.as_bytes(), &parsed_hash)
             .is_ok());
+    }
+
+    #[test]
+    fn test_escape_sql_string() {
+        // Test single quote escaping
+        assert_eq!(escape_sql_string("test'value"), "test''value");
+        
+        // Test backslash escaping
+        assert_eq!(escape_sql_string("test\\value"), "test\\\\value");
+        
+        // Test both combined
+        assert_eq!(escape_sql_string("test'value\\path"), "test''value\\\\path");
+        
+        // Test normal string without special characters
+        assert_eq!(escape_sql_string("normal_string"), "normal_string");
+        
+        // Test Argon2 hash-like string with $ characters (no escaping needed for $)
+        let argon2_like = "$argon2id$v=19$m=4096,t=3,p=1$salt$hash";
+        assert_eq!(escape_sql_string(argon2_like), argon2_like);
+        
+        // Test complex case with multiple types of quotes and backslashes
+        assert_eq!(
+            escape_sql_string("It's a 'test' with\\back\\slashes"),
+            "It''s a ''test'' with\\\\back\\\\slashes"
+        );
     }
 }
