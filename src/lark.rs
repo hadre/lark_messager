@@ -682,32 +682,32 @@ impl LarkClient {
     }
 
     /// 通过群聊名称获取群聊 ID
-    /// 
+    ///
     /// 使用群聊名称查找对应的飞书群聊 ID。
     /// 由于飞书 API 不支持直接按名称搜索，此方法会获取所有群聊列表并在本地进行名称匹配。
-    /// 
+    ///
     /// # 参数
     /// - `chat_name`: 群聊的名称（支持完全匹配和部分匹配）
-    /// 
+    ///
     /// # 返回
     /// - `Some(chat_id)`: 找到匹配的群聊 ID
     /// - `None`: 没有找到匹配的群聊
-    /// 
+    ///
     /// # 匹配规则
     /// 1. 完全匹配：群聊名称完全相同（优先级最高）
     /// 2. 部分匹配：群聊名称包含搜索关键词
     /// 3. 忽略大小写进行匹配
-    /// 
+    ///
     /// # 性能考虑
     /// - 如果群聊较多，此操作可能比较耗时
     /// - 建议在业务层面进行缓存优化
     /// - 对于频繁使用的群聊，可考虑直接使用 chat_id
-    /// 
+    ///
     /// # 限制
     /// - 需要机器人已加入目标群聊
     /// - 需要相应的 API 权限读取群聊列表
     /// - 每次查询都会遍历所有群聊（性能影响）
-    /// 
+    ///
     /// # API 文档
     /// https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/chat/list
     pub async fn get_chat_id_by_name(&self, chat_name: &str) -> AppResult<Option<String>> {
@@ -721,7 +721,7 @@ impl LarkClient {
 
         // 遍历所有页面寻找匹配的群聊
         loop {
-            let mut query_params = vec![("page_size", "200")];
+            let mut query_params = vec![("page_size", "100")];
             if let Some(ref token) = page_token {
                 query_params.push(("page_token", token));
             }
@@ -760,7 +760,10 @@ impl LarkClient {
                     for chat in &chats {
                         if let Some(ref name) = chat.name {
                             if name.to_lowercase() == chat_name_lower {
-                                debug!("Found exact match for chat name '{}': {}", chat_name, chat.chat_id);
+                                debug!(
+                                    "Found exact match for chat name '{}': {}",
+                                    chat_name, chat.chat_id
+                                );
                                 return Ok(Some(chat.chat_id.clone()));
                             }
                         }
@@ -770,8 +773,10 @@ impl LarkClient {
                     for chat in &chats {
                         if let Some(ref name) = chat.name {
                             if name.to_lowercase().contains(&chat_name_lower) {
-                                debug!("Found partial match for chat name '{}': {} ({})", 
-                                      chat_name, chat.chat_id, name);
+                                debug!(
+                                    "Found partial match for chat name '{}': {} ({})",
+                                    chat_name, chat.chat_id, name
+                                );
                                 return Ok(Some(chat.chat_id.clone()));
                             }
                         }
