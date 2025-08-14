@@ -861,3 +861,25 @@ curl_examples.sh中步骤6还是包含了使用user token的方式申请api key,
    ```
 
 此次修复消除了用户可能遇到的困惑和错误操作，确保示例脚本提供的是正确、可执行的操作流程。现在用户将得到准确的指导，了解如何正确地进行系统初始化和API key管理。
+
+# [2025-08-14 04:38:00][更新CLAUDE.md的Building and Running命令]
+## Prompt内容
+更新当前的claude.md中关于building and running的内容,当前还存在另外一个创建密钥的二进制文件,因此此处命令有误
+
+## 执行内容总结
+1. **检查了项目结构**：
+   - 发现项目包含两个二进制文件：主应用程序和`generate_credentials.rs`
+   - 确认了Cargo.toml中的项目配置和二进制目标
+
+2. **更新了Building and Running部分命令**：
+   - 将`cargo run`更新为更明确的描述：`# Build and run main application`
+   - 添加了`cargo run --bin generate_credentials`命令用于运行凭据生成工具
+   - 保持了清晰的注释说明每个命令的用途
+
+3. **优化了命令格式和对齐**：
+   - 使用统一的注释对齐格式，提高文档可读性
+   - 保持了原有的`cargo build`和`cargo build --release`命令
+   - 添加了对两个不同二进制文件的完整支持
+
+修改前的错误：缺少对独立凭据生成工具的说明
+修改后的改进：完整展示了项目中的所有可执行组件，为用户提供了正确的构建和运行指导。
