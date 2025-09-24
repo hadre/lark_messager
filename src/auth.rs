@@ -19,7 +19,9 @@ use argon2::password_hash::{rand_core::OsRng, SaltString};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, Duration, Utc};
 use hmac::{Hmac, Mac};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -137,6 +139,15 @@ pub struct AuthenticatedApiKey {
     pub owner: User,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JwtClaims {
+    pub sub: String,
+    pub username: String,
+    pub exp: usize,
+    pub iat: usize,
+    pub is_admin: bool,
+}
+
 /// 认证服务
 #[derive(Clone)]
 pub struct AuthService {
@@ -244,19 +255,9 @@ impl AuthService {
     }
 
     pub fn generate_jwt_token(&self, user: &User) -> AppResult<(String, DateTime<Utc>)> {
-        use jsonwebtoken::{encode, EncodingKey, Header};
-        #[derive(serde::Serialize)]
-        struct Claims {
-            sub: String,
-            username: String,
-            exp: usize,
-            iat: usize,
-            is_admin: bool,
-        }
-
         let now = Utc::now();
         let expires = now + Duration::hours(24);
-        let claims = Claims {
+        let claims = JwtClaims {
             sub: user.id.to_string(),
             username: user.username.clone(),
             exp: expires.timestamp() as usize,
@@ -274,16 +275,13 @@ impl AuthService {
     }
 
     pub async fn authenticate_jwt(&self, token: &str) -> AppResult<User> {
-        use jsonwebtoken::{decode, DecodingKey, Validation};
-        #[derive(serde::Deserialize)]
-        struct Claims {
-            sub: String,
-        }
+        let mut validation = Validation::default();
+        validation.validate_exp = true;
 
-        let token_data = decode::<Claims>(
+        let token_data = decode::<JwtClaims>(
             token,
             &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
-            &Validation::default(),
+            &validation,
         )?;
 
         let user_id = Uuid::parse_str(&token_data.claims.sub)
