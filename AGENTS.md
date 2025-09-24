@@ -19,7 +19,7 @@ Prepare a dedicated MySQL schema and export `TEST_DATABASE_URL` (or source `.env
 Follow the existing conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`) with imperative summaries. Pull requests must outline intent, surface schema or config impacts, and link related tickets. Attach curl snippets or screenshots for UX/API shifts and confirm fmt, clippy, and tests in the description.
 
 ## Configuration, Security & Logging
-Keep real secrets out of version control—only commit templates like `.env.example`. Regenerate credentials with `cargo run --bin generate_credentials` and store API keys immediately; they are shown once. Never log tokens or payloads, review `.gitignore` when adding config files, and record prompt executions in `prompts/prompt_records.md` to maintain traceability.
+Keep real secrets out of version control—only commit templates like `.env.example`. Regenerate credentials with `cargo run --bin generate_credentials` and store API keys immediately; they are shown once. Never log tokens or payloads, review `.gitignore` when adding config files, record prompt executions in `prompts/prompt_records.md` to maintain traceability, and after each task append the original prompt plus a brief execution summary to that log using the established format.
 
 ## Recent Updates
 - Refactored authentication to HMAC-signed API keys tied to auth_users/auth_api_keys with rate limiting, nonce caching, and failure thresholds.

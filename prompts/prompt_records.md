@@ -883,3 +883,12 @@ curl_examples.sh中步骤6还是包含了使用user token的方式申请api key,
 
 修改前的错误：缺少对独立凭据生成工具的说明
 修改后的改进：完整展示了项目中的所有可执行组件，为用户提供了正确的构建和运行指导。
+# [2025-09-24 06:12:10][修复JWT Claims解析与过期校验]
+## Prompt内容
+src/auth.rs中generate_jwt_token生成的token方式同authenticate_jwt中的解析方式不一致,解析时并没有判断token是否过期,这个地方看看是否要优化
+
+## 执行内容总结
+1. 审查并同步 JWT 生成与解析逻辑，确认原实现存在 Claims 结构不一致与未校验过期的问题。
+2. 新增共享的 `JwtClaims` 结构体，统一 `sub/username/iat/exp/is_admin` 字段并提供序列化/反序列化支持。
+3. 更新 `generate_jwt_token` 与 `authenticate_jwt`，恢复 `Validation::default()` 的过期校验，确保禁用账户仍会被拒绝。
+4. 调整相关 import，运行 `cargo fmt` 与 `cargo check` 验证编译通过。
