@@ -892,3 +892,21 @@ src/auth.rs中generate_jwt_token生成的token方式同authenticate_jwt中的解
 2. 新增共享的 `JwtClaims` 结构体，统一 `sub/username/iat/exp/is_admin` 字段并提供序列化/反序列化支持。
 3. 更新 `generate_jwt_token` 与 `authenticate_jwt`，恢复 `Validation::default()` 的过期校验，确保禁用账户仍会被拒绝。
 4. 调整相关 import，运行 `cargo fmt` 与 `cargo check` 验证编译通过。
+
+# [2025-09-24 06:23:54][合并初始迁移脚本]
+## Prompt内容
+migrations/001_initial.sql migrations/002_unified_auth.sql 这两个sql初始化文件合并到一起,删除冗余的表相关语句
+
+## 执行内容总结
+1. 将 unified auth 表结构及默认配置整合进 `migrations/001_initial.sql`，保留 `auth_users`、`auth_api_keys`、`app_configs`、`message_logs` 及索引。
+2. 为 `auth_api_keys.key_secret` 添加唯一索引，同时保留用户、消息日志索引以支持查询性能。
+3. 删除已冗余的 `migrations/002_unified_auth.sql`，确保初始迁移即可构建完整schema。
+
+# [2025-09-24 06:25:44][补充初始迁移注释]
+## Prompt内容
+migrations/001_initial.sql 给每表和字段补充上注释
+
+## 执行内容总结
+1. 为 `auth_users`、`auth_api_keys`、`message_logs`、`app_configs` 表添加中文备注，描述用途与字段含义。
+2. 为关键字段补充 `COMMENT`，明确用户状态、API key 安全属性、日志语义及配置项说明。
+3. 保留默认配置插入与索引定义，确保迁移具备自解释性。
