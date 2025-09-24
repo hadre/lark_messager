@@ -1,4 +1,3 @@
-use chrono::FixedOffset;
 use lark_messager::{
     auth::AuthService,
     database::Database,
@@ -17,18 +16,10 @@ fn test_database_url() -> String {
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string())
 }
 
-fn test_timezone() -> FixedOffset {
-    let secs = std::env::var("TEST_TIMEZONE_OFFSET_SECS")
-        .unwrap_or_else(|_| "0".to_string())
-        .parse::<i32>()
-        .unwrap_or(0);
-    FixedOffset::east_opt(secs).unwrap_or_else(|| FixedOffset::east_opt(0).unwrap())
-}
-
 #[tokio::test]
 async fn test_create_user_and_api_key_flow() {
     load_test_env();
-    let db = Database::new_with_migrations(&test_database_url(), test_timezone())
+    let db = Database::new_with_migrations(&test_database_url())
         .await
         .unwrap();
     let auth = AuthService::new("unit_test_secret".to_string(), db.clone())
@@ -67,7 +58,7 @@ async fn test_create_user_and_api_key_flow() {
 #[tokio::test]
 async fn test_api_key_status_and_failure_reset() {
     load_test_env();
-    let db = Database::new_with_migrations(&test_database_url(), test_timezone())
+    let db = Database::new_with_migrations(&test_database_url())
         .await
         .unwrap();
     let auth = AuthService::new("unit_test_secret".to_string(), db.clone())

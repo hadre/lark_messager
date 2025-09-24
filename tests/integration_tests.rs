@@ -1,6 +1,5 @@
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum_test::TestServer;
-use chrono::FixedOffset;
 use lark_messager::{
     auth::AuthService,
     database::Database,
@@ -23,14 +22,6 @@ fn test_database_url() -> String {
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string())
 }
 
-fn test_timezone() -> FixedOffset {
-    let secs = std::env::var("TEST_TIMEZONE_OFFSET_SECS")
-        .unwrap_or_else(|_| "0".to_string())
-        .parse::<i32>()
-        .unwrap_or(0);
-    FixedOffset::east_opt(secs).unwrap_or_else(|| FixedOffset::east_opt(0).unwrap())
-}
-
 struct TestContext {
     server: TestServer,
     username: String,
@@ -40,7 +31,7 @@ struct TestContext {
 async fn try_create_test_server() -> Option<TestContext> {
     load_test_env();
 
-    let db = match Database::new_with_migrations(&test_database_url(), test_timezone()).await {
+    let db = match Database::new_with_migrations(&test_database_url()).await {
         Ok(db) => db,
         Err(err) => {
             eprintln!("Skipping integration test (database unavailable): {err}");

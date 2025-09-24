@@ -101,7 +101,7 @@ impl Server {
             // 隐藏密码信息，仅显示主机和数据库名
             self.config.database_url.split('@').last().unwrap_or("***")
         );
-        let db = Database::new(&self.config.database_url, self.config.timezone_offset()).await?;
+        let db = Database::new(&self.config.database_url).await?;
         info!("Database connection established");
 
         // 根据配置决定是否执行数据库迁移

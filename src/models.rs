@@ -10,7 +10,7 @@
  * 以支持 JSON API 和数据库操作。
  */
 
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -32,9 +32,9 @@ pub struct User {
     /// 是否为管理员
     pub is_admin: bool,
     /// 账户创建时间
-    pub created_at: DateTime<FixedOffset>,
+    pub created_at: DateTime<Utc>,
     /// 最后更新时间
-    pub updated_at: DateTime<FixedOffset>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// API Key 状态
@@ -74,11 +74,11 @@ pub struct ApiKey {
     pub name: String,
     pub status: String,
     pub failure_count: i32,
-    pub last_failed_at: Option<DateTime<FixedOffset>>,
+    pub last_failed_at: Option<DateTime<Utc>>,
     pub rate_limit_per_minute: i32,
-    pub disabled_at: Option<DateTime<FixedOffset>>,
-    pub created_at: DateTime<FixedOffset>,
-    pub updated_at: DateTime<FixedOffset>,
+    pub disabled_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// 配置表实体
@@ -87,7 +87,7 @@ pub struct AuthConfig {
     pub config_type: String,
     pub config_key: String,
     pub config_value: String,
-    pub updated_at: DateTime<FixedOffset>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// 消息日志数据模型
@@ -99,7 +99,7 @@ pub struct MessageLog {
     pub recipient: String,
     pub message: String,
     pub status: String,
-    pub timestamp: DateTime<FixedOffset>,
+    pub timestamp: DateTime<Utc>,
 }
 
 // ============================================================================
@@ -117,7 +117,7 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoginResponse {
     pub token: String,
-    pub expires_at: DateTime<FixedOffset>,
+    pub expires_at: DateTime<Utc>,
 }
 
 /// 创建 API Key 请求
@@ -145,8 +145,8 @@ pub struct ApiKeySummary {
     pub status: ApiKeyStatus,
     pub rate_limit_per_minute: i32,
     pub failure_count: i32,
-    pub created_at: DateTime<FixedOffset>,
-    pub updated_at: DateTime<FixedOffset>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// 更新 API Key 状态请求
@@ -233,7 +233,7 @@ pub struct MessageResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
-    pub timestamp: DateTime<FixedOffset>,
+    pub timestamp: DateTime<Utc>,
     pub version: String,
 }
 

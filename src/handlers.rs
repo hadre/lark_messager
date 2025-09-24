@@ -24,6 +24,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use chrono::Utc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -43,10 +44,10 @@ pub struct AppState {
 // 公共端点
 // -----------------------------------------------------------------------------
 
-pub async fn health_check(State(state): State<AppState>) -> AppResult<Json<HealthResponse>> {
+pub async fn health_check() -> AppResult<Json<HealthResponse>> {
     Ok(Json(HealthResponse {
         status: "healthy".to_string(),
-        timestamp: state.db.now(),
+        timestamp: Utc::now(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     }))
 }
