@@ -20,11 +20,12 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, Duration, Utc};
 use hmac::{Hmac, Mac};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use moka::sync::Cache;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 use tokio::sync::{Mutex, RwLock};
 use tracing::warn;
 use uuid::Uuid;
@@ -33,6 +34,9 @@ const DEFAULT_AUTH_MAX_FAILURES: i32 = 5;
 const DEFAULT_MAX_RATE_LIMIT_PER_MINUTE: i32 = 600;
 const DEFAULT_NONCE_RETENTION_SECONDS: i64 = 300;
 const TIMESTAMP_SKEW_SECONDS: i64 = 300; // 5 minutes
+const RATE_LIMIT_CACHE_CAPACITY: u64 = 10_000;
+const NONCE_CACHE_CAPACITY: u64 = 100_000;
+const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -54,81 +58,83 @@ impl AuthConfigValues {
     }
 }
 
+fn seconds_to_std(secs: i64) -> StdDuration {
+    if secs <= 0 {
+        StdDuration::from_secs(1)
+    } else {
+        StdDuration::from_secs(secs as u64)
+    }
+}
+
 /// nonce 存储，防止 5 分钟窗口内重放
 struct NonceCache {
-    retention: Duration,
-    entries: HashMap<(Uuid, String), DateTime<Utc>>,
+    ttl: StdDuration,
+    capacity: u64,
+    cache: Cache<(Uuid, String), ()>,
 }
 
 impl NonceCache {
-    fn new(retention_seconds: i64) -> Self {
+    fn new(retention_seconds: i64, capacity: u64) -> Self {
+        let ttl = seconds_to_std(retention_seconds);
+        let cache = Cache::builder()
+            .max_capacity(capacity)
+            .time_to_live(ttl)
+            .build();
         Self {
-            retention: Duration::seconds(retention_seconds.max(0)),
-            entries: HashMap::new(),
+            ttl,
+            capacity,
+            cache,
         }
     }
 
     fn update_retention(&mut self, retention_seconds: i64) {
-        self.retention = Duration::seconds(retention_seconds.max(0));
-        self.evict_expired();
-    }
-
-    fn evict_expired(&mut self) {
-        let cutoff = Utc::now() - self.retention;
-        self.entries.retain(|_, timestamp| *timestamp >= cutoff);
+        self.ttl = seconds_to_std(retention_seconds);
+        let new_cache = Cache::builder()
+            .max_capacity(self.capacity)
+            .time_to_live(self.ttl)
+            .build();
+        for (key, _) in self.cache.iter() {
+            new_cache.insert((*key).clone(), ());
+        }
+        self.cache = new_cache;
     }
 
     /// 返回 true 表示 nonce 新鲜，可以使用；false 表示重复
-    fn check_and_store(&mut self, key_id: Uuid, nonce: &str) -> bool {
-        self.evict_expired();
+    fn check_and_store(&self, key_id: Uuid, nonce: &str) -> bool {
         let key = (key_id, nonce.to_string());
-        if self.entries.contains_key(&key) {
+        if self.cache.get(&key).is_some() {
             return false;
         }
-        self.entries.insert(key, Utc::now());
+        self.cache.insert(key, ());
         true
     }
 }
 
 /// 简单的每分钟频率限制器
 struct RateLimiter {
-    buckets: HashMap<Uuid, RateBucket>,
-}
-
-struct RateBucket {
-    window_start: DateTime<Utc>,
-    count: i32,
+    cache: Cache<Uuid, i32>,
 }
 
 impl RateLimiter {
-    fn new() -> Self {
-        Self {
-            buckets: HashMap::new(),
-        }
+    fn new(window: StdDuration, capacity: u64) -> Self {
+        let cache = Cache::builder()
+            .max_capacity(capacity)
+            .time_to_live(window)
+            .build();
+        Self { cache }
     }
 
-    fn allow(&mut self, key_id: Uuid, limit: i32) -> bool {
-        let now = Utc::now();
-        let bucket = self.buckets.entry(key_id).or_insert(RateBucket {
-            window_start: now,
-            count: 0,
-        });
-
-        if now >= bucket.window_start + Duration::minutes(1) {
-            bucket.window_start = now;
-            bucket.count = 0;
-        }
-
-        if bucket.count >= limit {
+    fn allow(&self, key_id: Uuid, limit: i32) -> bool {
+        let count = self.cache.get(&key_id).unwrap_or(0);
+        if count >= limit {
             return false;
         }
-
-        bucket.count += 1;
+        self.cache.insert(key_id, count + 1);
         true
     }
 
-    fn reset(&mut self, key_id: Uuid) {
-        self.buckets.remove(&key_id);
+    fn reset(&self, key_id: Uuid) {
+        self.cache.invalidate(&key_id);
     }
 }
 
@@ -154,7 +160,7 @@ pub struct AuthService {
     db: Database,
     config: Arc<RwLock<AuthConfigValues>>,
     nonce_cache: Arc<Mutex<NonceCache>>,
-    rate_limiter: Arc<Mutex<RateLimiter>>,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl AuthService {
@@ -163,8 +169,14 @@ impl AuthService {
             jwt_secret,
             db: db.clone(),
             config: Arc::new(RwLock::new(AuthConfigValues::new())),
-            nonce_cache: Arc::new(Mutex::new(NonceCache::new(DEFAULT_NONCE_RETENTION_SECONDS))),
-            rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
+            nonce_cache: Arc::new(Mutex::new(NonceCache::new(
+                DEFAULT_NONCE_RETENTION_SECONDS,
+                NONCE_CACHE_CAPACITY,
+            ))),
+            rate_limiter: Arc::new(RateLimiter::new(
+                StdDuration::from_secs(RATE_LIMIT_WINDOW_SECS),
+                RATE_LIMIT_CACHE_CAPACITY,
+            )),
         };
         service.reload_config_cache().await?;
         Ok(service)
@@ -375,14 +387,7 @@ impl AuthService {
             "disabled"
         };
         self.db.update_api_key_status(&key_id, new_status).await?;
-        {
-            let mut limiter = self.rate_limiter.lock().await;
-            if payload.enable {
-                limiter.reset(key_id);
-            } else {
-                limiter.reset(key_id);
-            }
-        }
+        self.rate_limiter.reset(key_id);
         Ok(())
     }
 
@@ -400,10 +405,7 @@ impl AuthService {
         }
 
         self.db.delete_api_key(&key_id).await?;
-        {
-            let mut limiter = self.rate_limiter.lock().await;
-            limiter.reset(key_id);
-        }
+        self.rate_limiter.reset(key_id);
         Ok(())
     }
 
@@ -436,10 +438,7 @@ impl AuthService {
         self.db
             .update_api_key_rate_limit(&key_id, payload.rate_limit_per_minute)
             .await?;
-        {
-            let mut limiter = self.rate_limiter.lock().await;
-            limiter.reset(key_id);
-        }
+        self.rate_limiter.reset(key_id);
         Ok(())
     }
 
@@ -539,22 +538,20 @@ impl AuthService {
             return Err(AppError::Unauthorized("API key disabled".to_string()));
         }
 
-        {
-            let mut limiter = self.rate_limiter.lock().await;
-            if !limiter.allow(key_id, key.rate_limit_per_minute) {
-                warn!("API key {} hit rate limit", key_id);
-                self.record_failure(&key_id, "rate_limit").await?;
-                return Err(AppError::RateLimit);
-            }
+        if !self.rate_limiter.allow(key_id, key.rate_limit_per_minute) {
+            warn!("API key {} hit rate limit", key_id);
+            self.record_failure(&key_id, "rate_limit").await?;
+            return Err(AppError::RateLimit);
         }
 
-        {
-            let mut nonce_cache = self.nonce_cache.lock().await;
-            if !nonce_cache.check_and_store(key_id, nonce_header) {
-                warn!("API key {} replayed nonce", key_id);
-                self.record_failure(&key_id, "nonce_replay").await?;
-                return Err(AppError::Auth("Nonce already used".to_string()));
-            }
+        let nonce_ok = {
+            let cache = self.nonce_cache.lock().await;
+            cache.check_and_store(key_id, nonce_header)
+        };
+        if !nonce_ok {
+            warn!("API key {} replayed nonce", key_id);
+            self.record_failure(&key_id, "nonce_replay").await?;
+            return Err(AppError::Auth("Nonce already used".to_string()));
         }
 
         let canonical = format!(
@@ -599,8 +596,7 @@ impl AuthService {
             self.db
                 .update_api_key_status(key_id, ApiKeyStatus::Disabled.to_string().as_str())
                 .await?;
-            let mut limiter = self.rate_limiter.lock().await;
-            limiter.reset(*key_id);
+            self.rate_limiter.reset(*key_id);
         }
         Ok(())
     }

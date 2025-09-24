@@ -953,3 +953,12 @@ src/handlers.rs 中send_message把一些校验前置,避免权限查询完后发
 1. 确认 `AuthenticatedApiKey` 的 `owner` 字段在调用链中未被使用。
 2. 删除结构体中的 `owner`，移除签名认证时对用户信息的额外查询，返回值仅携带 API key。
 3. 运行 `cargo fmt` 校验格式，避免无效数据库查询带来的额外开销。
+
+# [2025-09-24 07:27:46][改用LRU实现限流与nonce缓存]
+## Prompt内容
+帮我改为使用LRU或者TTL MAP实现ratelimit和nounce
+
+## 执行内容总结
+1. 引入 `moka` 同步缓存，使用固定容量 + TTL 的 `Cache` 替换原 `HashMap` 实现。
+2. `NonceCache` 改为 TTL 缓存，支持动态刷新保留时间；`RateLimiter` 改为 TTL 计数缓存并移除互斥锁。
+3. 新增容量/窗口常量、秒转 `StdDuration` 辅助函数，更新 `AuthService` 初始化与调用逻辑，`cargo fmt`/`cargo check` 验证通过。
