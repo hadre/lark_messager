@@ -20,3 +20,8 @@ Follow the existing conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`)
 
 ## Configuration, Security & Logging
 Keep real secrets out of version control—only commit templates like `.env.example`. Regenerate credentials with `cargo run --bin generate_credentials` and store API keys immediately; they are shown once. Never log tokens or payloads, review `.gitignore` when adding config files, and record prompt executions in `prompts/prompt_records.md` to maintain traceability.
+
+## Recent Updates
+- Refactored authentication to HMAC-signed API keys tied to auth_users/auth_api_keys with rate limiting, nonce caching, and failure thresholds.
+- Added /auth/api-keys and /auth/configs management endpoints plus CLI bootstrap flow limited to user creation.
+- Documented new workflows in README, covering canonical signing, admin bootstrap steps, troubleshooting, and updated architecture/security notes.
