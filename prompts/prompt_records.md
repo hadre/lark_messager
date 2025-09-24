@@ -962,3 +962,12 @@ src/handlers.rs 中send_message把一些校验前置,避免权限查询完后发
 1. 引入 `moka` 同步缓存，使用固定容量 + TTL 的 `Cache` 替换原 `HashMap` 实现。
 2. `NonceCache` 改为 TTL 缓存，支持动态刷新保留时间；`RateLimiter` 改为 TTL 计数缓存并移除互斥锁。
 3. 新增容量/窗口常量、秒转 `StdDuration` 辅助函数，更新 `AuthService` 初始化与调用逻辑，`cargo fmt`/`cargo check` 验证通过。
+
+# [2025-09-24 07:54:26][优化rate limiter重置策略]
+## Prompt内容
+优化一下rate limiter的重置逻辑,仅在api key从禁用改为启用时重置,其他情况不用重置
+
+## 执行内容总结
+1. 调整 `update_api_key_status`，仅在状态由禁用切换为启用时调用 `reset`；删除 `delete_api_key`、`update_api_key_rate_limit` 中的多余重置。
+2. 移除失败阈值禁用时的限流重置，避免冗余清理。
+3. `cargo fmt`、`cargo check` 验证新逻辑通过。

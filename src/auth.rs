@@ -387,7 +387,10 @@ impl AuthService {
             "disabled"
         };
         self.db.update_api_key_status(&key_id, new_status).await?;
-        self.rate_limiter.reset(key_id);
+
+        if payload.enable && key.status != "enabled" {
+            self.rate_limiter.reset(key_id);
+        }
         Ok(())
     }
 
@@ -405,7 +408,6 @@ impl AuthService {
         }
 
         self.db.delete_api_key(&key_id).await?;
-        self.rate_limiter.reset(key_id);
         Ok(())
     }
 
@@ -438,7 +440,6 @@ impl AuthService {
         self.db
             .update_api_key_rate_limit(&key_id, payload.rate_limit_per_minute)
             .await?;
-        self.rate_limiter.reset(key_id);
         Ok(())
     }
 
@@ -596,7 +597,6 @@ impl AuthService {
             self.db
                 .update_api_key_status(key_id, ApiKeyStatus::Disabled.to_string().as_str())
                 .await?;
-            self.rate_limiter.reset(*key_id);
         }
         Ok(())
     }
