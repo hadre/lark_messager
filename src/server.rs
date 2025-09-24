@@ -116,7 +116,7 @@ impl Server {
 
         // 第三步：初始化认证服务
         // 配置 JWT 和 API Key 双重认证机制
-        let auth = AuthService::new(self.config.jwt_secret.clone(), db.clone());
+        let auth = AuthService::new(self.config.jwt_secret.clone(), db.clone()).await?;
         info!("Authentication service initialized");
 
         // 第四步：初始化飞书客户端
@@ -151,6 +151,8 @@ impl Server {
         info!("  POST /messages/send - Send message to user");
         info!("  POST /messages/send-group - Send message to group");
         info!("  POST /recipients/verify - Verify recipient exists");
+        info!("  GET /auth/configs - View auth configuration (admin)");
+        info!("  PATCH /auth/configs - Update auth configuration (admin)");
         info!("  GET /health - Health check");
 
         // 第八步：启动 HTTP 服务器

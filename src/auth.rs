@@ -1,272 +1,321 @@
 /*!
  * 身份认证和授权模块
- * 
- * 提供完整的双重认证系统：
- * - JWT Token 认证（用户身份认证）
- * - API Key 认证（服务间认证）
- * - 密码哈希和验证（Argon2 算法）
- * - 权限管理和访问控制
- * 
- * 支持以下认证方式：
- * 1. 用户登录 -> JWT Token（24小时有效期）
- * 2. 服务调用 -> API Key（长期有效，可撤销）
- * 
- * 安全特性：
- * - 使用 Argon2 算法进行密码哈希
- * - JWT Token 包含用户信息和过期时间
- * - API Key 支持细粒度权限控制
- * - 所有敏感信息都经过哈希存储
+ *
+ * 实现统一的 API Key 鉴权机制，提供：
+ * - 用户管理（密码哈希、验证、JWT 管理端口令）
+ * - API Key 生成、禁用、失败计数、频率限制
+ * - HMAC-SHA256 请求签名校验（包含时间戳与 nonce 防重放）
+ * - 运行时可更新的鉴权配置（失败阈值、频率上限、nonce 保留时间）
  */
 
 use crate::database::Database;
 use crate::error::{AppError, AppResult};
-use crate::models::User;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use crate::models::{
+    ApiKey, ApiKeyStatus, AuthConfigEntry, AuthConfigResponse, CreateApiKeyRequest,
+    CreateApiKeyResponse, ResetApiKeyFailuresRequest, UpdateApiKeyRateLimitRequest,
+    UpdateApiKeyStatusRequest, UpdateAuthConfigRequest, User,
+};
 use argon2::password_hash::{rand_core::OsRng, SaltString};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, TokenData, Validation};
-use serde::{Deserialize, Serialize};
+use hmac::{Hmac, Mac};
+use rand::Rng;
+use sha2::Sha256;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+use tracing::warn;
 use uuid::Uuid;
 
-/// JWT Token 声明信息
-/// 
-/// 包含用户身份和令牌元数据，符合 JWT 标准
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    /// 主题（用户 ID）
-    pub sub: String,
-    /// 用户名
-    pub username: String,
-    /// 过期时间（Unix 时间戳）
-    pub exp: usize,
-    /// 签发时间（Unix 时间戳）
-    pub iat: usize,
+const DEFAULT_AUTH_MAX_FAILURES: i32 = 5;
+const DEFAULT_MAX_RATE_LIMIT_PER_MINUTE: i32 = 600;
+const DEFAULT_NONCE_RETENTION_SECONDS: i64 = 300;
+const TIMESTAMP_SKEW_SECONDS: i64 = 300; // 5 minutes
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// 缓存的鉴权配置
+#[derive(Debug, Clone)]
+struct AuthConfigValues {
+    auth_max_failures: i32,
+    max_rate_limit_per_minute: i32,
+    nonce_retention_seconds: i64,
 }
 
-/// 已认证的用户类型
-/// 
-/// 统一表示通过不同认证方式验证的用户，支持：
-/// - 通过 JWT 认证的普通用户
-/// - 通过 API Key 认证的服务
-#[derive(Debug)]
-pub enum AuthenticatedUser {
-    /// 普通用户（通过用户名密码登录）
-    User { 
-        /// 用户 ID
-        id: Uuid, 
-        /// 用户名
-        username: String 
-    },
-    /// 服务用户（通过 API Key 认证）
-    Service { 
-        /// 创建该 API Key 的用户 ID
-        id: Uuid, 
-        /// API Key 的友好名称
-        name: String, 
-        /// 权限列表
-        permissions: Vec<String> 
-    },
+impl AuthConfigValues {
+    fn new() -> Self {
+        Self {
+            auth_max_failures: DEFAULT_AUTH_MAX_FAILURES,
+            max_rate_limit_per_minute: DEFAULT_MAX_RATE_LIMIT_PER_MINUTE,
+            nonce_retention_seconds: DEFAULT_NONCE_RETENTION_SECONDS,
+        }
+    }
 }
 
-impl AuthenticatedUser {
-    /// 获取用户 ID
-    /// 
-    /// 无论是普通用户还是服务用户，都返回对应的用户 ID
-    pub fn id(&self) -> Uuid {
-        match self {
-            AuthenticatedUser::User { id, .. } => *id,
-            AuthenticatedUser::Service { id, .. } => *id,
+/// nonce 存储，防止 5 分钟窗口内重放
+struct NonceCache {
+    retention: Duration,
+    entries: HashMap<(Uuid, String), DateTime<Utc>>,
+}
+
+impl NonceCache {
+    fn new(retention_seconds: i64) -> Self {
+        Self {
+            retention: Duration::seconds(retention_seconds.max(0)),
+            entries: HashMap::new(),
         }
     }
 
-    /// 检查是否具有管理员权限
-    /// 
-    /// - 普通用户：默认没有管理员权限
-    /// - 服务用户：检查是否具有 "admin" 权限
-    pub fn is_admin(&self) -> bool {
-        match self {
-            AuthenticatedUser::User { .. } => false,
-            AuthenticatedUser::Service { permissions, .. } => {
-                permissions.contains(&"admin".to_string())
-            }
+    fn update_retention(&mut self, retention_seconds: i64) {
+        self.retention = Duration::seconds(retention_seconds.max(0));
+        self.evict_expired();
+    }
+
+    fn evict_expired(&mut self) {
+        let cutoff = Utc::now() - self.retention;
+        self.entries.retain(|_, timestamp| *timestamp >= cutoff);
+    }
+
+    /// 返回 true 表示 nonce 新鲜，可以使用；false 表示重复
+    fn check_and_store(&mut self, key_id: Uuid, nonce: &str) -> bool {
+        self.evict_expired();
+        let key = (key_id, nonce.to_string());
+        if self.entries.contains_key(&key) {
+            return false;
+        }
+        self.entries.insert(key, Utc::now());
+        true
+    }
+}
+
+/// 简单的每分钟频率限制器
+struct RateLimiter {
+    buckets: HashMap<Uuid, RateBucket>,
+}
+
+struct RateBucket {
+    window_start: DateTime<Utc>,
+    count: i32,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            buckets: HashMap::new(),
         }
     }
 
-    /// 检查是否可以发送消息
-    /// 
-    /// - 普通用户：默认可以发送消息
-    /// - 服务用户：需要 "send_messages" 或 "admin" 权限
-    pub fn can_send_messages(&self) -> bool {
-        match self {
-            AuthenticatedUser::User { .. } => true,
-            AuthenticatedUser::Service { permissions, .. } => {
-                permissions.contains(&"send_messages".to_string()) 
-                    || permissions.contains(&"admin".to_string())
-            }
+    fn allow(&mut self, key_id: Uuid, limit: i32) -> bool {
+        let now = Utc::now();
+        let bucket = self.buckets.entry(key_id).or_insert(RateBucket {
+            window_start: now,
+            count: 0,
+        });
+
+        if now >= bucket.window_start + Duration::minutes(1) {
+            bucket.window_start = now;
+            bucket.count = 0;
         }
+
+        if bucket.count >= limit {
+            return false;
+        }
+
+        bucket.count += 1;
+        true
     }
+
+    fn reset(&mut self, key_id: Uuid) {
+        self.buckets.remove(&key_id);
+    }
+}
+
+/// API 请求认证后的主体
+#[derive(Debug, Clone)]
+pub struct AuthenticatedApiKey {
+    pub key: ApiKey,
+    pub owner: User,
 }
 
 /// 认证服务
-/// 
-/// 提供统一的认证和授权功能，包括：
-/// - 密码哈希和验证
-/// - JWT Token 生成和验证
-/// - API Key 生成、哈希和验证
-/// - 用户认证和授权检查
 #[derive(Clone)]
 pub struct AuthService {
-    /// JWT 签名密钥
     jwt_secret: String,
-    /// 数据库连接
     db: Database,
+    config: Arc<RwLock<AuthConfigValues>>,
+    nonce_cache: Arc<Mutex<NonceCache>>,
+    rate_limiter: Arc<Mutex<RateLimiter>>,
 }
 
 impl AuthService {
-    /// 创建认证服务实例
-    /// 
-    /// # 参数
-    /// - `jwt_secret`: JWT 签名密钥，必须足够复杂以确保安全性
-    /// - `db`: 数据库连接实例
-    pub fn new(jwt_secret: String, db: Database) -> Self {
-        Self { jwt_secret, db }
+    pub async fn new(jwt_secret: String, db: Database) -> AppResult<Self> {
+        let service = Self {
+            jwt_secret,
+            db: db.clone(),
+            config: Arc::new(RwLock::new(AuthConfigValues::new())),
+            nonce_cache: Arc::new(Mutex::new(NonceCache::new(DEFAULT_NONCE_RETENTION_SECONDS))),
+            rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
+        };
+        service.reload_config_cache().await?;
+        Ok(service)
     }
 
-    /// 密码哈希
-    /// 
-    /// 使用 Argon2 算法对密码进行安全哈希。
-    /// Argon2 是目前推荐的密码哈希算法，可以抗对各种攻击。
-    /// 
-    /// # 参数
-    /// - `password`: 原始密码字符串
-    /// 
-    /// # 返回
-    /// 哈希后的密码字符串，包含盐值和参数
-    /// 
-    /// # 安全性
-    /// - 自动生成随机盐值
-    /// - 使用默认的 Argon2 参数（适合大多数应用）
-    /// - 抵抗彩虹表和暴力破解攻击
+    /// 重新加载数据库中的鉴权配置
+    pub async fn reload_config_cache(&self) -> AppResult<()> {
+        let configs = self.db.get_configs_by_type("auth").await?;
+        let mut current = AuthConfigValues::new();
+        for item in configs {
+            match item.config_key.as_str() {
+                "auth_max_failures" => {
+                    if let Ok(v) = item.config_value.parse::<i32>() {
+                        current.auth_max_failures = v.max(1);
+                    }
+                }
+                "max_rate_limit_per_minute" => {
+                    if let Ok(v) = item.config_value.parse::<i32>() {
+                        current.max_rate_limit_per_minute = v.max(1);
+                    }
+                }
+                "nonce_retention_seconds" => {
+                    if let Ok(v) = item.config_value.parse::<i64>() {
+                        current.nonce_retention_seconds = v.max(0);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        {
+            let mut guard = self.config.write().await;
+            *guard = current.clone();
+        }
+
+        {
+            let mut nonce_cache = self.nonce_cache.lock().await;
+            nonce_cache.update_retention(current.nonce_retention_seconds);
+        }
+
+        Ok(())
+    }
+
+    fn current_config(&self) -> impl std::future::Future<Output = AuthConfigValues> + '_ {
+        async move { self.config.read().await.clone() }
+    }
+
+    // ------------------------------------------------------------------
+    // 密码处理
+    // ------------------------------------------------------------------
+
     pub fn hash_password(&self, password: &str) -> AppResult<String> {
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
-        
-        let password_hash = argon2
+        let hash = argon2
             .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
-
-        Ok(password_hash.to_string())
+            .map_err(|e| AppError::Internal(format!("Failed to hash password: {e}")))?;
+        Ok(hash.to_string())
     }
 
-    /// 验证密码
-    /// 
-    /// 校验用户输入的密码是否与存储的哈希匹配。
-    /// 
-    /// # 参数
-    /// - `password`: 用户输入的原始密码
-    /// - `password_hash`: 数据库中存储的密码哈希
-    /// 
-    /// # 返回
-    /// - `true`: 密码正确
-    /// - `false`: 密码错误
-    /// 
-    /// # 安全性
-    /// - 使用常量时间比较，防止时间攻击
-    /// - 错误不会泄露具体的失败原因
     pub fn verify_password(&self, password: &str, password_hash: &str) -> AppResult<bool> {
         let parsed_hash = PasswordHash::new(password_hash)
-            .map_err(|e| AppError::Internal(format!("Failed to parse password hash: {}", e)))?;
-        
+            .map_err(|e| AppError::Internal(format!("Failed to parse password hash: {e}")))?;
         let argon2 = Argon2::default();
-        
         match argon2.verify_password(password.as_bytes(), &parsed_hash) {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
         }
     }
 
-    /// 生成 JWT Token
-    /// 
-    /// 为用户创建一个有效期为 24 小时的 JWT Token。
-    /// Token 中包含用户 ID、用户名和过期时间。
-    /// 
-    /// # 参数
-    /// - `user`: 用户对象，包含用户信息
-    /// 
-    /// # 返回
-    /// 返回元组：(JWT Token 字符串, 过期时间)
-    /// 
-    /// # JWT 结构
-    /// - Header: 默认算法 (HS256)
-    /// - Payload: 用户 ID、用户名、过期时间、签发时间
-    /// - Signature: 使用配置的密钥签名
+    pub async fn authenticate_user(&self, username: &str, password: &str) -> AppResult<User> {
+        let user = self
+            .db
+            .get_user_by_username(username)
+            .await?
+            .ok_or_else(|| AppError::Auth("User not found".to_string()))?;
+
+        if user.disabled_at.is_some() {
+            return Err(AppError::Unauthorized("User account disabled".to_string()));
+        }
+
+        let valid = self.verify_password(password, &user.password_hash)?;
+        if !valid {
+            return Err(AppError::Auth("Invalid credentials".to_string()));
+        }
+        Ok(user)
+    }
+
     pub fn generate_jwt_token(&self, user: &User) -> AppResult<(String, DateTime<Utc>)> {
-        let expiration = Utc::now() + Duration::hours(24);
-        
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        #[derive(serde::Serialize)]
+        struct Claims {
+            sub: String,
+            username: String,
+            exp: usize,
+            iat: usize,
+            is_admin: bool,
+        }
+
+        let now = Utc::now();
+        let expires = now + Duration::hours(24);
         let claims = Claims {
             sub: user.id.to_string(),
             username: user.username.clone(),
-            exp: expiration.timestamp() as usize,
-            iat: Utc::now().timestamp() as usize,
+            exp: expires.timestamp() as usize,
+            iat: now.timestamp() as usize,
+            is_admin: user.is_admin,
         };
 
         let token = encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(self.jwt_secret.as_ref()),
+            &EncodingKey::from_secret(self.jwt_secret.as_bytes()),
         )?;
 
-        Ok((token, expiration))
+        Ok((token, expires))
     }
 
-    /// 验证 JWT Token
-    /// 
-    /// 解析并验证 JWT Token 的有效性，包括：
-    /// - 签名验证（防止篡改）
-    /// - 过期时间检查
-    /// - 格式正确性验证
-    /// 
-    /// # 参数
-    /// - `token`: 要验证的 JWT Token 字符串
-    /// 
-    /// # 返回
-    /// 解析后的声明信息，包含用户 ID 和用户名
-    /// 
-    /// # 错误
-    /// - Token 格式错误
-    /// - 签名验证失败
-    /// - Token 已过期
-    pub fn verify_jwt_token(&self, token: &str) -> AppResult<Claims> {
-        let token_data: TokenData<Claims> = decode(
+    pub async fn authenticate_jwt(&self, token: &str) -> AppResult<User> {
+        use jsonwebtoken::{decode, DecodingKey, Validation};
+        #[derive(serde::Deserialize)]
+        struct Claims {
+            sub: String,
+        }
+
+        let token_data = decode::<Claims>(
             token,
-            &DecodingKey::from_secret(self.jwt_secret.as_ref()),
+            &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
             &Validation::default(),
         )?;
 
-        Ok(token_data.claims)
+        let user_id = Uuid::parse_str(&token_data.claims.sub)
+            .map_err(|_| AppError::Auth("Invalid token subject".to_string()))?;
+
+        let user = self
+            .db
+            .get_user_by_id(&user_id)
+            .await?
+            .ok_or_else(|| AppError::Auth("User not found".to_string()))?;
+
+        if user.disabled_at.is_some() {
+            return Err(AppError::Unauthorized("User account disabled".to_string()));
+        }
+
+        Ok(user)
     }
 
-    /// 生成随机 API Key
-    /// 
-    /// 创建一个指定长度的随机字符串，用作 API Key。
-    /// 使用大小写字母和数字的组合，避免歧义字符。
-    /// 
-    /// # 参数
-    /// - `length`: 生成的 API Key 长度，建议不少于 32 位
-    /// 
-    /// # 返回
-    /// 随机生成的 API Key 字符串
-    /// 
-    /// # 安全性
-    /// - 使用加密安全的随机数生成器
-    /// - 字符集包含 62 个字符，熔量足够大
-    /// - 结果不可预测且难以暴力破解
-    pub fn generate_api_key(&self, length: usize) -> String {
-        use rand::Rng;
-        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
-                                 abcdefghijklmnopqrstuvwxyz\
-                                 0123456789";
-        
+    pub async fn create_user(
+        &self,
+        username: &str,
+        password: &str,
+        is_admin: bool,
+    ) -> AppResult<User> {
+        let password_hash = self.hash_password(password)?;
+        self.db
+            .create_user(username, &password_hash, is_admin)
+            .await
+    }
+
+    pub fn generate_api_key_secret(&self, length: usize) -> String {
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         let mut rng = rand::thread_rng();
         (0..length)
             .map(|_| {
@@ -276,203 +325,304 @@ impl AuthService {
             .collect()
     }
 
-    /// API Key 哈希
-    /// 
-    /// 使用与密码相同的 Argon2 算法对 API Key 进行哈希。
-    /// 这样可以防止 API Key 在数据库中以明文存储。
-    /// 
-    /// # 参数
-    /// - `api_key`: 原始的 API Key 字符串
-    /// 
-    /// # 返回
-    /// 哈希后的 API Key，包含盐值和参数
-    /// 
-    /// # 安全性
-    /// - 与密码哈希使用相同的安全标准
-    /// - 无法从哈希反推原始 API Key
-    /// - 可以安全地存储在日志和数据库中
-    pub fn hash_api_key(&self, api_key: &str) -> AppResult<String> {
-        use argon2::password_hash::rand_core::OsRng;
-        let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
-        
-        let key_hash = argon2
-            .hash_password(api_key.as_bytes(), &salt)
-            .map_err(|e| AppError::Internal(format!("Failed to hash API key: {}", e)))?;
-
-        Ok(key_hash.to_string())
-    }
-
-    /// 验证 API Key
-    /// 
-    /// 校验 API Key 是否与存储的哈希值匹配。
-    /// 使用与密码验证相同的安全机制。
-    /// 
-    /// # 参数
-    /// - `api_key`: 用户提供的原始 API Key
-    /// - `key_hash`: 数据库中存储的 API Key 哈希
-    /// 
-    /// # 返回
-    /// - `true`: API Key 正确
-    /// - `false`: API Key 错误
-    /// 
-    /// # 安全性
-    /// - 使用常量时间比较，防止时间攻击
-    /// - 错误不会泄露具体的失败原因
-    pub fn verify_api_key(&self, api_key: &str, key_hash: &str) -> AppResult<bool> {
-        let parsed_hash = PasswordHash::new(key_hash)
-            .map_err(|e| AppError::Internal(format!("Failed to parse API key hash: {}", e)))?;
-        
-        let argon2 = Argon2::default();
-        
-        match argon2.verify_password(api_key.as_bytes(), &parsed_hash) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    /// 解析权限字符串
-    /// 
-    /// 将逗号分隔的权限字符串转换为权限列表。
-    /// 自动过滤空白和空权限。
-    /// 
-    /// # 参数
-    /// - `permissions_str`: 权限字符串，格式如 "admin,send_messages,view_logs"
-    /// 
-    /// # 返回
-    /// 解析后的权限列表
-    /// 
-    /// # 示例
-    /// ```rust
-    /// let perms = auth.parse_permissions("admin, send_messages , view_logs");
-    /// assert_eq!(perms, vec!["admin", "send_messages", "view_logs"]);
-    /// ```
-    pub fn parse_permissions(&self, permissions_str: &str) -> Vec<String> {
-        permissions_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    }
-
-    /// 用户身份认证
-    /// 
-    /// 验证用户名和密码组合的有效性。用于用户登录流程。
-    /// 
-    /// # 参数
-    /// - `username`: 用户名
-    /// - `password`: 原始密码
-    /// 
-    /// # 返回
-    /// 认证成功时返回用户对象
-    /// 
-    /// # 错误
-    /// - 用户不存在
-    /// - 密码错误
-    /// - 数据库连接失败
-    /// 
-    /// # 安全性
-    /// - 用户名和密码错误使用相同的错误信息，防止用户枚举
-    /// - 密码验证使用安全的 Argon2 算法
-    pub async fn authenticate_user(&self, username: &str, password: &str) -> AppResult<User> {
-        let user = self.db.get_user_by_username(username)
-            .await?
-            .ok_or_else(|| AppError::Auth("Invalid username or password".to_string()))?;
-
-        if !self.verify_password(password, &user.password_hash)? {
-            return Err(AppError::Auth("Invalid username or password".to_string()));
+    pub async fn create_api_key(
+        &self,
+        owner: &User,
+        payload: CreateApiKeyRequest,
+    ) -> AppResult<CreateApiKeyResponse> {
+        let config = self.current_config().await;
+        if payload.rate_limit_per_minute > config.max_rate_limit_per_minute {
+            return Err(AppError::Validation(format!(
+                "Rate limit exceeds configured maximum {}",
+                config.max_rate_limit_per_minute
+            )));
         }
 
-        Ok(user)
-    }
+        let secret = self.generate_api_key_secret(64);
+        let api_key = self
+            .db
+            .create_api_key(
+                &owner.id,
+                &secret,
+                &payload.name,
+                payload.rate_limit_per_minute,
+            )
+            .await?;
 
-    /// JWT Token 认证
-    /// 
-    /// 验证 JWT Token 并返回认证用户信息。
-    /// 用于保护需要用户身份验证的 API 端点。
-    /// 
-    /// # 参数
-    /// - `token`: JWT Token 字符串
-    /// 
-    /// # 返回
-    /// 认证成功时返回 `AuthenticatedUser::User`
-    /// 
-    /// # 验证流程
-    /// 1. 解析和验证 Token 签名
-    /// 2. 检查 Token 是否过期
-    /// 3. 提取用户 ID
-    /// 4. 从数据库查询用户信息
-    /// 5. 返回认证结果
-    /// 
-    /// # 错误
-    /// - Token 格式错误
-    /// - Token 签名无效
-    /// - Token 已过期
-    /// - 用户不存在（可能已被删除）
-    pub async fn authenticate_jwt(&self, token: &str) -> AppResult<AuthenticatedUser> {
-        let claims = self.verify_jwt_token(token)?;
-        
-        let user_id = Uuid::parse_str(&claims.sub)
-            .map_err(|_| AppError::Auth("Invalid user ID in token".to_string()))?;
-
-        let user = self.db.get_user_by_id(&user_id)
-            .await?
-            .ok_or_else(|| AppError::Auth("User not found".to_string()))?;
-
-        Ok(AuthenticatedUser::User {
-            id: user.id,
-            username: user.username,
+        Ok(CreateApiKeyResponse {
+            id: api_key.id,
+            name: api_key.name,
+            secret,
+            status: ApiKeyStatus::Enabled,
+            rate_limit_per_minute: api_key.rate_limit_per_minute,
         })
     }
 
-    /// API Key 认证
-    /// 
-    /// 验证 API Key 并返回服务用户信息，包含权限列表。
-    /// 用于保护需要服务间认证的 API 端点。
-    /// 
-    /// # 参数
-    /// - `api_key`: API Key 字符串
-    /// 
-    /// # 返回
-    /// 认证成功时返回 `AuthenticatedUser::Service`，包含权限信息
-    /// 
-    /// # 验证流程
-    /// 1. 从数据库获取所有活跃的 API Key 哈希
-    /// 2. 逐一验证输入的 API Key 与存储的哈希
-    /// 3. 检查 API Key 是否被撤销
-    /// 4. 解析权限字符串为权限列表
-    /// 5. 返回服务用户认证结果
-    /// 
-    /// # 权限系统
-    /// - `admin`: 管理员权限，可以创建/撤销 API Key
-    /// - `send_messages`: 发送消息权限
-    /// - 可扩展其他自定义权限
-    /// 
-    /// # 错误
-    /// - API Key 无效或不存在
-    /// - API Key 已被撤销
-    /// - 数据库连接失败
-    /// 
-    /// # 安全性
-    /// - API Key 以哈希形式存储，不可逆向
-    /// - 支持细粒度权限控制
-    /// - 可以随时撤销而无需更改代码
-    pub async fn authenticate_api_key(&self, api_key: &str) -> AppResult<AuthenticatedUser> {
-        // Use the new verification method that works with hashed keys
-        let api_key_record = self.db.find_api_key_by_verification(api_key, self)
-            .await?
-            .ok_or_else(|| AppError::Auth("Invalid API key".to_string()))?;
+    pub async fn list_api_keys(&self, owner: &User) -> AppResult<Vec<ApiKey>> {
+        self.db.list_api_keys_for_user(&owner.id).await
+    }
 
-        if api_key_record.revoked_at.is_some() {
-            return Err(AppError::Auth("API key has been revoked".to_string()));
+    pub async fn update_api_key_status(
+        &self,
+        owner: &User,
+        key_id: Uuid,
+        payload: UpdateApiKeyStatusRequest,
+    ) -> AppResult<()> {
+        let key = self
+            .db
+            .get_api_key_by_id(&key_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
+
+        if key.user_id != owner.id {
+            return Err(AppError::Unauthorized(
+                "Cannot modify another user's key".to_string(),
+            ));
         }
 
-        let permissions = self.parse_permissions(&api_key_record.permissions);
+        let new_status = if payload.enable {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        self.db.update_api_key_status(&key_id, new_status).await?;
+        {
+            let mut limiter = self.rate_limiter.lock().await;
+            if payload.enable {
+                limiter.reset(key_id);
+            } else {
+                limiter.reset(key_id);
+            }
+        }
+        Ok(())
+    }
 
-        Ok(AuthenticatedUser::Service {
-            id: api_key_record.created_by,
-            name: api_key_record.name,
-            permissions,
+    pub async fn delete_api_key(&self, owner: &User, key_id: Uuid) -> AppResult<()> {
+        let key = self
+            .db
+            .get_api_key_by_id(&key_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
+
+        if key.user_id != owner.id {
+            return Err(AppError::Unauthorized(
+                "Cannot delete another user's key".to_string(),
+            ));
+        }
+
+        self.db.delete_api_key(&key_id).await?;
+        {
+            let mut limiter = self.rate_limiter.lock().await;
+            limiter.reset(key_id);
+        }
+        Ok(())
+    }
+
+    pub async fn update_api_key_rate_limit(
+        &self,
+        owner: &User,
+        key_id: Uuid,
+        payload: UpdateApiKeyRateLimitRequest,
+    ) -> AppResult<()> {
+        let config = self.current_config().await;
+        if payload.rate_limit_per_minute > config.max_rate_limit_per_minute {
+            return Err(AppError::Validation(format!(
+                "Rate limit exceeds configured maximum {}",
+                config.max_rate_limit_per_minute
+            )));
+        }
+
+        let key = self
+            .db
+            .get_api_key_by_id(&key_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
+
+        if key.user_id != owner.id {
+            return Err(AppError::Unauthorized(
+                "Cannot modify another user's key".to_string(),
+            ));
+        }
+
+        self.db
+            .update_api_key_rate_limit(&key_id, payload.rate_limit_per_minute)
+            .await?;
+        {
+            let mut limiter = self.rate_limiter.lock().await;
+            limiter.reset(key_id);
+        }
+        Ok(())
+    }
+
+    pub async fn reset_api_key_failures(
+        &self,
+        owner: &User,
+        key_id: Uuid,
+        _payload: ResetApiKeyFailuresRequest,
+    ) -> AppResult<()> {
+        let key = self
+            .db
+            .get_api_key_by_id(&key_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("API key not found".to_string()))?;
+
+        if key.user_id != owner.id {
+            return Err(AppError::Unauthorized(
+                "Cannot modify another user's key".to_string(),
+            ));
+        }
+
+        self.db.reset_api_key_failure(&key_id).await?;
+        Ok(())
+    }
+
+    pub async fn update_auth_configs(
+        &self,
+        _admin: &User,
+        payload: UpdateAuthConfigRequest,
+    ) -> AppResult<AuthConfigResponse> {
+        for entry in &payload.entries {
+            let config_type = if entry.config_type.trim().is_empty() {
+                "auth"
+            } else {
+                entry.config_type.as_str()
+            };
+            self.db
+                .upsert_config_entry(config_type, &entry.key, &entry.value)
+                .await?;
+        }
+        self.reload_config_cache().await?;
+        Ok(AuthConfigResponse {
+            entries: payload.entries.clone(),
         })
+    }
+
+    pub async fn get_auth_configs(&self) -> AppResult<AuthConfigResponse> {
+        let configs = self.db.get_configs_by_type("auth").await?;
+        let entries = configs
+            .into_iter()
+            .map(|c| AuthConfigEntry {
+                config_type: c.config_type,
+                key: c.config_key,
+                value: c.config_value,
+            })
+            .collect();
+        Ok(AuthConfigResponse { entries })
+    }
+
+    /// 认证带签名的 API 请求
+    pub async fn authenticate_signed_request(
+        &self,
+        key_header: &str,
+        timestamp_header: &str,
+        nonce_header: &str,
+        signature_header: &str,
+        method: &str,
+        path_with_query: &str,
+    ) -> AppResult<AuthenticatedApiKey> {
+        let key_id = Uuid::parse_str(key_header)
+            .map_err(|_| AppError::Auth("Invalid API key identifier".to_string()))?;
+
+        let timestamp = timestamp_header
+            .parse::<i64>()
+            .map_err(|_| AppError::Auth("Invalid timestamp".to_string()))?;
+        let request_time = DateTime::from_timestamp(timestamp, 0)
+            .ok_or_else(|| AppError::Auth("Timestamp out of range".to_string()))?;
+
+        let now = Utc::now();
+        let skew = (now - request_time).num_seconds().abs();
+        if skew > TIMESTAMP_SKEW_SECONDS {
+            warn!("API key {} timestamp skew {}s", key_id, skew);
+            self.record_failure(&key_id, "timestamp_skew").await?;
+            return Err(AppError::Auth(
+                "Timestamp outside allowed window".to_string(),
+            ));
+        }
+
+        let key = self
+            .db
+            .get_api_key_by_id(&key_id)
+            .await?
+            .ok_or_else(|| AppError::Auth("API key not found".to_string()))?;
+
+        if key.status != "enabled" {
+            warn!("API key {} disabled attempt", key_id);
+            return Err(AppError::Unauthorized("API key disabled".to_string()));
+        }
+
+        let owner = self
+            .db
+            .get_user_by_id(&key.user_id)
+            .await?
+            .ok_or_else(|| AppError::Auth("API key owner not found".to_string()))?;
+
+        if owner.disabled_at.is_some() {
+            return Err(AppError::Unauthorized("Owner account disabled".to_string()));
+        }
+
+        {
+            let mut limiter = self.rate_limiter.lock().await;
+            if !limiter.allow(key_id, key.rate_limit_per_minute) {
+                warn!("API key {} hit rate limit", key_id);
+                self.record_failure(&key_id, "rate_limit").await?;
+                return Err(AppError::RateLimit);
+            }
+        }
+
+        {
+            let mut nonce_cache = self.nonce_cache.lock().await;
+            if !nonce_cache.check_and_store(key_id, nonce_header) {
+                warn!("API key {} replayed nonce", key_id);
+                self.record_failure(&key_id, "nonce_replay").await?;
+                return Err(AppError::Auth("Nonce already used".to_string()));
+            }
+        }
+
+        let canonical = format!(
+            "{timestamp}\n{nonce}\n{method}\n{path}",
+            timestamp = timestamp_header,
+            nonce = nonce_header,
+            method = method.to_uppercase(),
+            path = path_with_query
+        );
+
+        let expected_signature = self.compute_signature(&key.key_secret, canonical.as_bytes());
+        let provided_signature = signature_header.trim();
+
+        if !constant_time_eq::constant_time_eq(
+            expected_signature.as_bytes(),
+            provided_signature.as_bytes(),
+        ) {
+            warn!("API key {} signature mismatch", key_id);
+            self.record_failure(&key_id, "signature_mismatch").await?;
+            return Err(AppError::Auth("Invalid signature".to_string()));
+        }
+
+        Ok(AuthenticatedApiKey { key, owner })
+    }
+
+    fn compute_signature(&self, secret: &str, message: &[u8]) -> String {
+        let mut mac =
+            HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+        mac.update(message);
+        let result = mac.finalize().into_bytes();
+        hex::encode(result)
+    }
+
+    async fn record_failure(&self, key_id: &Uuid, reason: &str) -> AppResult<()> {
+        let count = self.db.increment_api_key_failure(key_id).await?;
+        let config = self.current_config().await;
+        if count >= config.auth_max_failures {
+            warn!(
+                "API key {} disabled after repeated failures (reason: {})",
+                key_id, reason
+            );
+            self.db
+                .update_api_key_status(key_id, ApiKeyStatus::Disabled.to_string().as_str())
+                .await?;
+            let mut limiter = self.rate_limiter.lock().await;
+            limiter.reset(*key_id);
+        }
+        Ok(())
     }
 }

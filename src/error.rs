@@ -1,6 +1,6 @@
 /*!
  * 错误处理模块
- * 
+ *
  * 定义了应用程序中所有可能出现的错误类型，并提供统一的错误处理机制。
  * 所有错误都会被转换为适当的 HTTP 响应，确保客户端能够获得有意义的错误信息。
  */
@@ -14,12 +14,12 @@ use serde_json::json;
 use thiserror::Error;
 
 /// 应用程序结果类型的别名
-/// 
+///
 /// 所有可能失败的操作都应该返回这个类型，统一错误处理
 pub type AppResult<T> = Result<T, AppError>;
 
 /// 应用程序错误枚举
-/// 
+///
 /// 定义了所有可能出现的错误情况，每种错误都会映射到相应的 HTTP 状态码
 #[derive(Error, Debug)]
 pub enum AppError {
@@ -91,7 +91,7 @@ pub enum AppError {
 
 impl IntoResponse for AppError {
     /// 将错误转换为 HTTP 响应
-    /// 
+    ///
     /// 根据错误类型选择适当的 HTTP 状态码，并返回包含错误信息的 JSON 响应
     fn into_response(self) -> Response {
         let (status, error_message) = match &self {
