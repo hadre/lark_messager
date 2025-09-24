@@ -35,8 +35,6 @@ pub struct User {
     pub created_at: DateTime<Utc>,
     /// 最后更新时间
     pub updated_at: DateTime<Utc>,
-    /// 禁用时间
-    pub disabled_at: Option<DateTime<Utc>>,
 }
 
 /// API Key 状态

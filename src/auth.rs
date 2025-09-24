@@ -136,7 +136,6 @@ impl RateLimiter {
 #[derive(Debug, Clone)]
 pub struct AuthenticatedApiKey {
     pub key: ApiKey,
-    pub owner: User,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,10 +242,6 @@ impl AuthService {
             .await?
             .ok_or_else(|| AppError::Auth("User not found".to_string()))?;
 
-        if user.disabled_at.is_some() {
-            return Err(AppError::Unauthorized("User account disabled".to_string()));
-        }
-
         let valid = self.verify_password(password, &user.password_hash)?;
         if !valid {
             return Err(AppError::Auth("Invalid credentials".to_string()));
@@ -292,10 +287,6 @@ impl AuthService {
             .get_user_by_id(&user_id)
             .await?
             .ok_or_else(|| AppError::Auth("User not found".to_string()))?;
-
-        if user.disabled_at.is_some() {
-            return Err(AppError::Unauthorized("User account disabled".to_string()));
-        }
 
         Ok(user)
     }
@@ -548,16 +539,6 @@ impl AuthService {
             return Err(AppError::Unauthorized("API key disabled".to_string()));
         }
 
-        let owner = self
-            .db
-            .get_user_by_id(&key.user_id)
-            .await?
-            .ok_or_else(|| AppError::Auth("API key owner not found".to_string()))?;
-
-        if owner.disabled_at.is_some() {
-            return Err(AppError::Unauthorized("Owner account disabled".to_string()));
-        }
-
         {
             let mut limiter = self.rate_limiter.lock().await;
             if !limiter.allow(key_id, key.rate_limit_per_minute) {
@@ -596,7 +577,7 @@ impl AuthService {
             return Err(AppError::Auth("Invalid signature".to_string()));
         }
 
-        Ok(AuthenticatedApiKey { key, owner })
+        Ok(AuthenticatedApiKey { key })
     }
 
     fn compute_signature(&self, secret: &str, message: &[u8]) -> String {

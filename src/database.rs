@@ -10,7 +10,7 @@
 
 use crate::error::AppResult;
 use crate::models::{ApiKey, AuthConfig, MessageLog, User};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sqlx::{MySql, MySqlPool, Pool, Row};
 use uuid::Uuid;
 
@@ -52,8 +52,8 @@ impl Database {
 
         sqlx::query(
             r#"
-            INSERT INTO auth_users (id, username, password_hash, is_admin, created_at, updated_at, disabled_at)
-            VALUES (?, ?, ?, ?, ?, ?, NULL)
+            INSERT INTO auth_users (id, username, password_hash, is_admin, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(id.to_string())
@@ -72,14 +72,13 @@ impl Database {
             is_admin,
             created_at: now,
             updated_at: now,
-            disabled_at: None,
         })
     }
 
     pub async fn get_user_by_username(&self, username: &str) -> AppResult<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, password_hash, is_admin, created_at, updated_at, disabled_at
+            SELECT id, username, password_hash, is_admin, created_at, updated_at
             FROM auth_users
             WHERE username = ?
             "#,
@@ -95,14 +94,13 @@ impl Database {
             is_admin: row.get::<i8, _>("is_admin") != 0,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
-            disabled_at: row.get("disabled_at"),
         }))
     }
 
     pub async fn get_user_by_id(&self, user_id: &Uuid) -> AppResult<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, password_hash, is_admin, created_at, updated_at, disabled_at
+            SELECT id, username, password_hash, is_admin, created_at, updated_at
             FROM auth_users
             WHERE id = ?
             "#,
@@ -118,28 +116,7 @@ impl Database {
             is_admin: row.get::<i8, _>("is_admin") != 0,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
-            disabled_at: row.get("disabled_at"),
         }))
-    }
-
-    pub async fn set_user_disabled(&self, user_id: &Uuid, disabled: bool) -> AppResult<()> {
-        let now = Utc::now();
-        let disabled_at: Option<DateTime<Utc>> = if disabled { Some(now) } else { None };
-
-        sqlx::query(
-            r#"
-            UPDATE auth_users
-            SET disabled_at = ?, updated_at = ?
-            WHERE id = ?
-            "#,
-        )
-        .bind(disabled_at)
-        .bind(now)
-        .bind(user_id.to_string())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
     }
 
     // ---------------------------------------------------------------------

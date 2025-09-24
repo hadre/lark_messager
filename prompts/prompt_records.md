@@ -925,3 +925,31 @@ src/handlers.rs 中send_message把一些校验前置,避免权限查询完后发
 ## 执行内容总结
 1. 将消息内容长度与空白检查移动到签名鉴权之前，避免先进行 API Key/数据库验证。
 2. 保持后续收件人校验、消息发送、日志记录逻辑不变，实现失败请求的早退。
+
+# [2025-09-24 06:48:08][移除用户启用/禁用逻辑]
+## Prompt内容
+删除用户启用/禁用的相关逻辑,不需要该逻辑
+
+## 执行内容总结
+1. 删除 `auth_users`/`auth_api_keys` 中 `disabled_at` 字段及对应的 Model、数据库读取、迁移定义。
+2. 移除 `authenticate_jwt` 及相关流程中的用户禁用检查，同时清理 API Key 更新逻辑中对禁用时间的维护。
+3. 更新初始迁移脚本、数据库 CRUD 和测试模型引用，使代码仅保留状态字段。
+
+
+# [2025-09-24 06:54:56][恢复API Key启用禁用支持]
+## Prompt内容
+有一个地方修改错误,我只需要删除用户相关的启用/禁用逻辑,API key相关的启用/禁用逻辑还需要保留
+
+## 执行内容总结
+1. 为 `auth_api_keys` 恢复 `disabled_at` 字段及迁移注释，保留 API Key 启用/禁用所需的状态信息。
+2. 重新在模型与数据库层补齐 `disabled_at` 序列化、列表/查询映射，以及 `update_api_key_status` 中的禁用时间维护。
+3. 保证用户禁用逻辑保持删除状态，同时 `cargo fmt` / `cargo check` 验证通过。
+
+# [2025-09-24 07:00:30][移除AuthenticatedApiKey owner信息]
+## Prompt内容
+帮我确认一下AuthenticatedApiKey中是否有必要包含owner的信息,如无必要,将其中的owner删除
+
+## 执行内容总结
+1. 确认 `AuthenticatedApiKey` 的 `owner` 字段在调用链中未被使用。
+2. 删除结构体中的 `owner`，移除签名认证时对用户信息的额外查询，返回值仅携带 API key。
+3. 运行 `cargo fmt` 校验格式，避免无效数据库查询带来的额外开销。

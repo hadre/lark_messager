@@ -7,8 +7,7 @@ CREATE TABLE auth_users (
     password_hash VARCHAR(255) NOT NULL COMMENT '使用 Argon2 哈希后的密码',
     is_admin BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否为管理员账号',
     created_at DATETIME NOT NULL COMMENT '创建时间',
-    updated_at DATETIME NOT NULL COMMENT '最后更新时间',
-    disabled_at DATETIME NULL COMMENT '禁用时间，NULL 表示启用'
+    updated_at DATETIME NOT NULL COMMENT '最后更新时间'
 ) COMMENT='系统用户表';
 
 -- API Key 元数据及安全控制
