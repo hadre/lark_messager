@@ -1,7 +1,7 @@
 /*!
  * 数据库操作模块
  *
- * 提供 MySQL 数据库的操作接口：
+ * 提供 MySQL 数据库的操作接口，包括：
  * - 用户管理
  * - API Key 管理
  * - 配置项管理
@@ -10,24 +10,26 @@
 
 use crate::error::AppResult;
 use crate::models::{ApiKey, AuthConfig, MessageLog, User};
-use chrono::Utc;
+use chrono::offset::LocalResult;
+use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone, Utc};
 use sqlx::{MySql, MySqlPool, Pool, Row};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Database {
     pool: Pool<MySql>,
+    tz: FixedOffset,
 }
 
 impl Database {
-    pub async fn new(database_url: &str) -> AppResult<Self> {
+    pub async fn new(database_url: &str, tz: FixedOffset) -> AppResult<Self> {
         let pool = MySqlPool::connect(database_url).await?;
-        Ok(Database { pool })
+        Ok(Database { pool, tz })
     }
 
-    pub async fn new_with_migrations(database_url: &str) -> AppResult<Self> {
+    pub async fn new_with_migrations(database_url: &str, tz: FixedOffset) -> AppResult<Self> {
         let pool = MySqlPool::connect(database_url).await?;
-        let db = Database { pool };
+        let db = Database { pool, tz };
         db.migrate().await?;
         Ok(db)
     }
@@ -37,9 +39,28 @@ impl Database {
         Ok(())
     }
 
-    // ---------------------------------------------------------------------
-    // 用户管理
-    // ---------------------------------------------------------------------
+    #[inline]
+    pub fn timezone(&self) -> FixedOffset {
+        self.tz
+    }
+
+    #[inline]
+    pub fn now(&self) -> DateTime<FixedOffset> {
+        Utc::now().with_timezone(&self.tz)
+    }
+
+    #[inline]
+    fn to_naive(&self, dt: &DateTime<FixedOffset>) -> NaiveDateTime {
+        dt.naive_local()
+    }
+
+    fn from_naive(&self, naive: NaiveDateTime) -> DateTime<FixedOffset> {
+        match self.tz.from_local_datetime(&naive) {
+            LocalResult::Single(dt) => dt,
+            LocalResult::Ambiguous(first, _) => first,
+            LocalResult::None => DateTime::from_naive_utc_and_offset(naive, self.tz),
+        }
+    }
 
     pub async fn create_user(
         &self,
@@ -48,7 +69,8 @@ impl Database {
         is_admin: bool,
     ) -> AppResult<User> {
         let id = Uuid::new_v4();
-        let now = Utc::now();
+        let now = self.now();
+        let now_naive = self.to_naive(&now);
 
         sqlx::query(
             r#"
@@ -60,8 +82,8 @@ impl Database {
         .bind(username)
         .bind(password_hash)
         .bind(is_admin)
-        .bind(now)
-        .bind(now)
+        .bind(now_naive)
+        .bind(now_naive)
         .execute(&self.pool)
         .await?;
 
@@ -70,7 +92,7 @@ impl Database {
             username: username.to_string(),
             password_hash: password_hash.to_string(),
             is_admin,
-            created_at: now,
+            created_at: now.clone(),
             updated_at: now,
         })
     }
@@ -92,8 +114,8 @@ impl Database {
             username: row.get("username"),
             password_hash: row.get("password_hash"),
             is_admin: row.get::<i8, _>("is_admin") != 0,
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            created_at: self.from_naive(row.get("created_at")),
+            updated_at: self.from_naive(row.get("updated_at")),
         }))
     }
 
@@ -114,14 +136,10 @@ impl Database {
             username: row.get("username"),
             password_hash: row.get("password_hash"),
             is_admin: row.get::<i8, _>("is_admin") != 0,
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            created_at: self.from_naive(row.get("created_at")),
+            updated_at: self.from_naive(row.get("updated_at")),
         }))
     }
-
-    // ---------------------------------------------------------------------
-    // API Key 管理
-    // ---------------------------------------------------------------------
 
     pub async fn create_api_key(
         &self,
@@ -131,7 +149,8 @@ impl Database {
         rate_limit_per_minute: i32,
     ) -> AppResult<ApiKey> {
         let id = Uuid::new_v4();
-        let now = Utc::now();
+        let now = self.now();
+        let now_naive = self.to_naive(&now);
 
         sqlx::query(
             r#"
@@ -146,8 +165,8 @@ impl Database {
         .bind(key_secret)
         .bind(name)
         .bind(rate_limit_per_minute)
-        .bind(now)
-        .bind(now)
+        .bind(now_naive)
+        .bind(now_naive)
         .execute(&self.pool)
         .await?;
 
@@ -161,7 +180,7 @@ impl Database {
             last_failed_at: None,
             rate_limit_per_minute,
             disabled_at: None,
-            created_at: now,
+            created_at: now.clone(),
             updated_at: now,
         })
     }
@@ -186,11 +205,15 @@ impl Database {
             name: row.get("name"),
             status: row.get("status"),
             failure_count: row.get("failure_count"),
-            last_failed_at: row.get("last_failed_at"),
+            last_failed_at: row
+                .get::<Option<NaiveDateTime>, _>("last_failed_at")
+                .map(|dt| self.from_naive(dt)),
             rate_limit_per_minute: row.get("rate_limit_per_minute"),
-            disabled_at: row.get("disabled_at"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            disabled_at: row
+                .get::<Option<NaiveDateTime>, _>("disabled_at")
+                .map(|dt| self.from_naive(dt)),
+            created_at: self.from_naive(row.get("created_at")),
+            updated_at: self.from_naive(row.get("updated_at")),
         }))
     }
 
@@ -217,19 +240,24 @@ impl Database {
                 name: row.get("name"),
                 status: row.get("status"),
                 failure_count: row.get("failure_count"),
-                last_failed_at: row.get("last_failed_at"),
+                last_failed_at: row
+                    .get::<Option<NaiveDateTime>, _>("last_failed_at")
+                    .map(|dt| self.from_naive(dt)),
                 rate_limit_per_minute: row.get("rate_limit_per_minute"),
-                disabled_at: row.get("disabled_at"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                disabled_at: row
+                    .get::<Option<NaiveDateTime>, _>("disabled_at")
+                    .map(|dt| self.from_naive(dt)),
+                created_at: self.from_naive(row.get("created_at")),
+                updated_at: self.from_naive(row.get("updated_at")),
             })
             .collect())
     }
 
     pub async fn update_api_key_status(&self, key_id: &Uuid, status: &str) -> AppResult<()> {
-        let now = Utc::now();
-        let disabled_at = if status == "disabled" {
-            Some(now)
+        let now = self.now();
+        let now_naive = self.to_naive(&now);
+        let disabled_naive = if status == "disabled" {
+            Some(now_naive)
         } else {
             None
         };
@@ -242,8 +270,8 @@ impl Database {
             "#,
         )
         .bind(status)
-        .bind(disabled_at)
-        .bind(now)
+        .bind(disabled_naive)
+        .bind(now_naive)
         .bind(key_id.to_string())
         .execute(&self.pool)
         .await?;
@@ -252,7 +280,7 @@ impl Database {
     }
 
     pub async fn increment_api_key_failure(&self, key_id: &Uuid) -> AppResult<i32> {
-        let now = Utc::now();
+        let now_naive = self.to_naive(&self.now());
         let rec = sqlx::query(
             r#"
             UPDATE auth_api_keys
@@ -262,8 +290,8 @@ impl Database {
             WHERE id = ?
             "#,
         )
-        .bind(now)
-        .bind(now)
+        .bind(now_naive)
+        .bind(now_naive)
         .bind(key_id.to_string())
         .execute(&self.pool)
         .await?;
@@ -281,7 +309,7 @@ impl Database {
     }
 
     pub async fn reset_api_key_failure(&self, key_id: &Uuid) -> AppResult<()> {
-        let now = Utc::now();
+        let now_naive = self.to_naive(&self.now());
         sqlx::query(
             r#"
             UPDATE auth_api_keys
@@ -291,7 +319,7 @@ impl Database {
             WHERE id = ?
             "#,
         )
-        .bind(now)
+        .bind(now_naive)
         .bind(key_id.to_string())
         .execute(&self.pool)
         .await?;
@@ -304,7 +332,7 @@ impl Database {
         key_id: &Uuid,
         rate_limit_per_minute: i32,
     ) -> AppResult<()> {
-        let now = Utc::now();
+        let now_naive = self.to_naive(&self.now());
 
         sqlx::query(
             r#"
@@ -314,7 +342,7 @@ impl Database {
             "#,
         )
         .bind(rate_limit_per_minute)
-        .bind(now)
+        .bind(now_naive)
         .bind(key_id.to_string())
         .execute(&self.pool)
         .await?;
@@ -329,10 +357,6 @@ impl Database {
             .await?;
         Ok(())
     }
-
-    // ---------------------------------------------------------------------
-    // 配置项管理
-    // ---------------------------------------------------------------------
 
     pub async fn get_configs_by_type(&self, config_type: &str) -> AppResult<Vec<AuthConfig>> {
         let rows = sqlx::query(
@@ -352,7 +376,7 @@ impl Database {
                 config_type: row.get("config_type"),
                 config_key: row.get("config_key"),
                 config_value: row.get("config_value"),
-                updated_at: row.get("updated_at"),
+                updated_at: self.from_naive(row.get("updated_at")),
             })
             .collect())
     }
@@ -363,7 +387,7 @@ impl Database {
         key: &str,
         value: &str,
     ) -> AppResult<()> {
-        let now = Utc::now();
+        let now_naive = self.to_naive(&self.now());
 
         sqlx::query(
             r#"
@@ -375,16 +399,12 @@ impl Database {
         .bind(config_type)
         .bind(key)
         .bind(value)
-        .bind(now)
+        .bind(now_naive)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
-
-    // ---------------------------------------------------------------------
-    // 消息日志
-    // ---------------------------------------------------------------------
 
     pub async fn log_message(
         &self,
@@ -395,7 +415,8 @@ impl Database {
         status: &str,
     ) -> AppResult<MessageLog> {
         let id = Uuid::new_v4();
-        let now = Utc::now();
+        let now = self.now();
+        let now_naive = self.to_naive(&now);
 
         sqlx::query(
             r#"
@@ -409,7 +430,7 @@ impl Database {
         .bind(recipient)
         .bind(message)
         .bind(status)
-        .bind(now)
+        .bind(now_naive)
         .execute(&self.pool)
         .await?;
 
@@ -471,7 +492,7 @@ impl Database {
                 recipient: row.get("recipient"),
                 message: row.get("message"),
                 status: row.get("status"),
-                timestamp: row.get("timestamp"),
+                timestamp: self.from_naive(row.get("timestamp")),
             })
             .collect())
     }

@@ -971,3 +971,12 @@ src/handlers.rs 中send_message把一些校验前置,避免权限查询完后发
 1. 调整 `update_api_key_status`，仅在状态由禁用切换为启用时调用 `reset`；删除 `delete_api_key`、`update_api_key_rate_limit` 中的多余重置。
 2. 移除失败阈值禁用时的限流重置，避免冗余清理。
 3. `cargo fmt`、`cargo check` 验证新逻辑通过。
+
+# [2025-09-24 09:36:59][引入可配置时区并按偏移写入时间]
+## Prompt内容
+目前程序中使用的时间是utc,这个需要作为一个时区的配置项,并修改相关的时间处理的地方
+
+## 执行内容总结
+1. 增加 `TIMEZONE_OFFSET_SECS` 配置，`Config` 暴露 `timezone_offset`/`now` 接口，数据库与认证组件统一使用 `DateTime<FixedOffset>`。
+2. `Database` 写入 `NaiveDateTime` 时使用偏移后的本地时间，读取时转换回固定偏移；`AuthService`、`handlers::health_check`、测试等同步改用偏移时间。
+3. 引入 `moka` 缓存后的限流/nonce 逻辑保持不变，`cargo fmt`、`cargo check` 验证通过。

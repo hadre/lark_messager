@@ -38,6 +38,7 @@ cp .env.example .env
 LARK_APP_ID=your-lark-app-id
 LARK_APP_SECRET=your-lark-app-secret
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+TIMEZONE_OFFSET_SECS=0  # e.g., 28800 for UTC+8
 ```
 
 4. Build and run:

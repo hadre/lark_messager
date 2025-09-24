@@ -83,7 +83,7 @@ async fn main() -> Result<(), String> {
     let options = parse_args()?;
 
     let config = Config::from_env().map_err(|e| format!("Failed to load config: {}", e))?;
-    let database = Database::new(&config.database_url)
+    let database = Database::new(&config.database_url, config.timezone_offset())
         .await
         .map_err(|e| format!("Database connection failed: {}", e))?;
     let auth_service = AuthService::new(config.jwt_secret.clone(), database.clone())

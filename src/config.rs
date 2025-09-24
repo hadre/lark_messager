@@ -6,6 +6,7 @@
  */
 
 use crate::error::{AppError, AppResult};
+use chrono::{DateTime, FixedOffset, Utc};
 use std::env;
 
 /// 应用程序配置结构体
@@ -48,6 +49,9 @@ pub struct Config {
     /// 是否在启动时自动执行数据库迁移
     /// 默认为 true（开发环境友好），生产环境建议设为 false
     pub auto_migrate: bool,
+
+    /// 时区偏移（秒），用于统一时间写入/输出
+    pub timezone_offset_secs: i32,
 }
 
 impl Config {
@@ -115,6 +119,19 @@ impl Config {
                 .map_err(|_| {
                     AppError::Config("Invalid AUTO_MIGRATE (expected true/false)".to_string())
                 })?,
+            timezone_offset_secs: env::var("TIMEZONE_OFFSET_SECS")
+                .unwrap_or_else(|_| "0".to_string())
+                .parse()
+                .map_err(|_| AppError::Config("Invalid TIMEZONE_OFFSET_SECS".to_string()))?,
         })
+    }
+
+    pub fn timezone_offset(&self) -> FixedOffset {
+        FixedOffset::east_opt(self.timezone_offset_secs)
+            .unwrap_or_else(|| FixedOffset::east_opt(0).unwrap())
+    }
+
+    pub fn now(&self) -> DateTime<FixedOffset> {
+        Utc::now().with_timezone(&self.timezone_offset())
     }
 }

@@ -17,7 +17,7 @@ use crate::models::{
 };
 use argon2::password_hash::{rand_core::OsRng, SaltString};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, FixedOffset};
 use hmac::{Hmac, Mac};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use moka::sync::Cache;
@@ -164,6 +164,14 @@ pub struct AuthService {
 }
 
 impl AuthService {
+    fn timezone(&self) -> FixedOffset {
+        self.db.timezone()
+    }
+
+    fn now(&self) -> DateTime<FixedOffset> {
+        self.db.now()
+    }
+
     pub async fn new(jwt_secret: String, db: Database) -> AppResult<Self> {
         let service = Self {
             jwt_secret,
@@ -261,8 +269,8 @@ impl AuthService {
         Ok(user)
     }
 
-    pub fn generate_jwt_token(&self, user: &User) -> AppResult<(String, DateTime<Utc>)> {
-        let now = Utc::now();
+    pub fn generate_jwt_token(&self, user: &User) -> AppResult<(String, DateTime<FixedOffset>)> {
+        let now = self.now();
         let expires = now + Duration::hours(24);
         let claims = JwtClaims {
             sub: user.id.to_string(),
@@ -516,9 +524,10 @@ impl AuthService {
             .parse::<i64>()
             .map_err(|_| AppError::Auth("Invalid timestamp".to_string()))?;
         let request_time = DateTime::from_timestamp(timestamp, 0)
-            .ok_or_else(|| AppError::Auth("Timestamp out of range".to_string()))?;
+            .ok_or_else(|| AppError::Auth("Timestamp out of range".to_string()))?
+            .with_timezone(&self.timezone());
 
-        let now = Utc::now();
+        let now = self.now();
         let skew = (now - request_time).num_seconds().abs();
         if skew > TIMESTAMP_SKEW_SECONDS {
             warn!("API key {} timestamp skew {}s", key_id, skew);
