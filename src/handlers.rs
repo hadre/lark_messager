@@ -196,8 +196,6 @@ pub async fn send_message(
     State(state): State<AppState>,
     Json(request): Json<SendMessageRequest>,
 ) -> AppResult<Json<MessageResponse>> {
-    let auth_key = authenticate_signed_api_key(&headers, &state, "POST", "/messages/send").await?;
-
     if request.message.trim().is_empty() {
         return Err(AppError::Validation("Message cannot be empty".to_string()));
     }
@@ -207,6 +205,8 @@ pub async fn send_message(
             "Message too long (max 10000 characters)".to_string(),
         ));
     }
+
+    let auth_key = authenticate_signed_api_key(&headers, &state, "POST", "/messages/send").await?;
 
     info!(
         "API key {} sending message to recipient: {}",
