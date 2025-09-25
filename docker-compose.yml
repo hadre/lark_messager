@@ -1,45 +1,34 @@
-version: '3.8'
+version: "3.9"
+
+x-app-environment: &app-environment
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be provided}
+  JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production}
+  LARK_APP_ID: ${LARK_APP_ID}
+  LARK_APP_SECRET: ${LARK_APP_SECRET}
+  SERVER_HOST: 0.0.0.0
+  SERVER_PORT: 8080
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  API_KEY_LENGTH: 64
 
 services:
-  mysql:
-    image: mysql:8.0
-    environment:
-      - MYSQL_ROOT_PASSWORD=rootpassword
-      - MYSQL_DATABASE=lark_messager
-      - MYSQL_USER=lark_user
-      - MYSQL_PASSWORD=lark_password
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    restart: unless-stopped
-    command: --default-authentication-plugin=mysql_native_password
-
   lark_messager:
-    build: .
-    depends_on:
-      - mysql
+    build:
+      context: .
+      target: runtime
+    image: ${IMAGE_REGISTRY:-ghcr.io/your-org}/lark-messager:${IMAGE_TAG:-latest}
     ports:
       - "8080:8080"
     environment:
-      - DATABASE_URL=mysql://lark_user:lark_password@mysql:3306/lark_messager
-      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production}
-      - LARK_APP_ID=${LARK_APP_ID}
-      - LARK_APP_SECRET=${LARK_APP_SECRET}
-      - SERVER_HOST=0.0.0.0
-      - SERVER_PORT=8080
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - API_KEY_LENGTH=64
+      <<: *app-environment
     volumes:
-      - ./logs:/app/logs
+      - logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
 volumes:
-  mysql_data:
   logs:

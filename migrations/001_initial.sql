@@ -50,7 +50,8 @@ CREATE TABLE app_configs (
 INSERT INTO app_configs (config_type, config_key, config_value, updated_at) VALUES
     ('auth', 'auth_max_failures', '5', NOW()),
     ('auth', 'max_rate_limit_per_minute', '600', NOW()),
-    ('auth', 'nonce_retention_seconds', '300', NOW());
+    ('auth', 'nonce_retention_seconds', '300', NOW()),
+    ('auth', 'jwt_extension_seconds', '1800', NOW());
 
 -- Indexes to support lookups and auditing
 CREATE UNIQUE INDEX idx_auth_users_username ON auth_users(username);
