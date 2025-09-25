@@ -14,9 +14,9 @@ use crate::error::{AppError, AppResult};
 use crate::lark::LarkClient;
 use crate::models::{
     ApiKeyStatus, ApiKeySummary, AuthConfigResponse, CreateApiKeyRequest, CreateApiKeyResponse,
-    CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageResponse, MessageStatus,
-    ResetApiKeyFailuresRequest, SendGroupMessageRequest, SendMessageRequest, SenderType,
-    UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest,
+    CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageResponse,
+    MessageStatus, ResetApiKeyFailuresRequest, SendGroupMessageRequest, SendMessageRequest,
+    SenderType, UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest,
     UpdateUserPasswordRequest, User, UserResponse, VerifyRecipientRequest, VerifyRecipientResponse,
 };
 use axum::{
@@ -135,6 +135,30 @@ pub async fn delete_user(
     info!("User {} deleted by admin {}", user_id, user.username);
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn extend_jwt_token(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> AppResult<Json<LoginResponse>> {
+    let auth_header = headers
+        .get("authorization")
+        .ok_or_else(|| AppError::Auth("Authorization header required".to_string()))?;
+
+    let value = auth_header
+        .to_str()
+        .map_err(|_| AppError::Auth("Invalid authorization header".to_string()))?;
+
+    if !value.starts_with("Bearer ") {
+        return Err(AppError::Auth("Bearer token required".to_string()));
+    }
+
+    let token = &value[7..];
+    let (new_token, expires_at) = state.auth.extend_jwt_token(token).await?;
+    Ok(Json(LoginResponse {
+        token: new_token,
+        expires_at,
+    }))
 }
 
 // -----------------------------------------------------------------------------

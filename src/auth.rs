@@ -37,6 +37,7 @@ const TIMESTAMP_SKEW_SECONDS: i64 = 300; // 5 minutes
 const RATE_LIMIT_CACHE_CAPACITY: u64 = 10_000;
 const NONCE_CACHE_CAPACITY: u64 = 100_000;
 const RATE_LIMIT_WINDOW_SECS: u64 = 60;
+const DEFAULT_JWT_EXTENSION_SECONDS: i64 = 3600; // 1 hour
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -46,6 +47,7 @@ struct AuthConfigValues {
     auth_max_failures: i32,
     max_rate_limit_per_minute: i32,
     nonce_retention_seconds: i64,
+    jwt_extension_seconds: i64,
 }
 
 impl AuthConfigValues {
@@ -54,6 +56,7 @@ impl AuthConfigValues {
             auth_max_failures: DEFAULT_AUTH_MAX_FAILURES,
             max_rate_limit_per_minute: DEFAULT_MAX_RATE_LIMIT_PER_MINUTE,
             nonce_retention_seconds: DEFAULT_NONCE_RETENTION_SECONDS,
+            jwt_extension_seconds: DEFAULT_JWT_EXTENSION_SECONDS,
         }
     }
 }
@@ -203,6 +206,11 @@ impl AuthService {
                         current.nonce_retention_seconds = v.max(0);
                     }
                 }
+                "jwt_extension_seconds" => {
+                    if let Ok(v) = item.config_value.parse::<i64>() {
+                        current.jwt_extension_seconds = v.max(0);
+                    }
+                }
                 _ => {}
             }
         }
@@ -279,6 +287,54 @@ impl AuthService {
         )?;
 
         Ok((token, expires))
+    }
+
+    pub async fn extend_jwt_token(&self, token: &str) -> AppResult<(String, DateTime<Utc>)> {
+        let mut validation = Validation::default();
+        validation.validate_exp = true;
+
+        let token_data = decode::<JwtClaims>(
+            token,
+            &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
+            &validation,
+        )?;
+
+        let user_id = Uuid::parse_str(&token_data.claims.sub)
+            .map_err(|_| AppError::Auth("Invalid token subject".to_string()))?;
+
+        let user = self
+            .db
+            .get_user_by_id(&user_id)
+            .await?
+            .ok_or_else(|| AppError::Auth("User not found".to_string()))?;
+
+        let config = self.current_config().await;
+        if config.jwt_extension_seconds <= 0 {
+            return Err(AppError::Validation(
+                "JWT extension is disabled by configuration".to_string(),
+            ));
+        }
+
+        let current_exp = DateTime::<Utc>::from_timestamp(token_data.claims.exp as i64, 0)
+            .ok_or_else(|| AppError::Auth("Invalid token expiration".to_string()))?;
+        let base = std::cmp::max(current_exp, Utc::now());
+        let new_expires = base + Duration::seconds(config.jwt_extension_seconds);
+
+        let new_claims = JwtClaims {
+            sub: user.id.to_string(),
+            username: user.username.clone(),
+            exp: new_expires.timestamp() as usize,
+            iat: Utc::now().timestamp() as usize,
+            is_admin: user.is_admin,
+        };
+
+        let new_token = encode(
+            &Header::default(),
+            &new_claims,
+            &EncodingKey::from_secret(self.jwt_secret.as_bytes()),
+        )?;
+
+        Ok((new_token, new_expires))
     }
 
     pub async fn authenticate_jwt(&self, token: &str) -> AppResult<User> {

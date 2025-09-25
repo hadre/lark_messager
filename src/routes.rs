@@ -5,8 +5,8 @@
  */
 
 use crate::handlers::{
-    create_api_key, create_user, delete_api_key, delete_user, get_auth_configs, health_check,
-    list_api_keys, login, reset_api_key_failures, send_group_message, send_message,
+    create_api_key, create_user, delete_api_key, delete_user, extend_jwt_token, get_auth_configs,
+    health_check, list_api_keys, login, reset_api_key_failures, send_group_message, send_message,
     update_api_key_rate_limit, update_api_key_status, update_auth_configs, update_user_password,
     verify_recipient, AppState,
 };
@@ -28,6 +28,7 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/auth/login", post(login))
+        .route("/auth/token/extend", post(extend_jwt_token))
         .route("/auth/users", post(create_user))
         .route("/auth/users/:user_id", delete(delete_user))
         .route("/auth/users/:user_id/password", patch(update_user_password))

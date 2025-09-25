@@ -1,6 +1,6 @@
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum_test::TestServer;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use lark_messager::{
     auth::AuthService,
@@ -181,6 +181,51 @@ async fn test_login_success_and_failure() {
         })
         .await;
     failure.assert_status(StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_extend_jwt_token_uses_configured_window() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let token = body["token"].as_str().unwrap();
+    let initial_exp: DateTime<Utc> =
+        DateTime::parse_from_rfc3339(body["expires_at"].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&Utc);
+
+    let (header_name, header_value) = bearer_headers(token);
+    let extend = ctx
+        .server
+        .post("/auth/token/extend")
+        .add_header(header_name, header_value)
+        .await;
+    extend.assert_status(StatusCode::OK);
+    let extended: Value = extend.json();
+    let new_token = extended["token"].as_str().unwrap();
+    let new_exp: DateTime<Utc> =
+        DateTime::parse_from_rfc3339(extended["expires_at"].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&Utc);
+
+    assert_ne!(token, new_token);
+    assert!(new_exp > initial_exp);
+    let diff = (new_exp - initial_exp).num_seconds();
+    assert!(
+        diff >= 1,
+        "expected expiration to be extended, diff {diff}s"
+    );
 }
 
 #[tokio::test]
