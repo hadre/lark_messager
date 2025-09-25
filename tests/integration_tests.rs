@@ -7,7 +7,8 @@ use lark_messager::{
     lark::LarkClient,
     models::{
         CreateApiKeyRequest, CreateUserRequest, LoginRequest, ResetApiKeyFailuresRequest,
-        UpdateApiKeyStatusRequest, UpdateUserPasswordRequest, UserResponse,
+        UpdateApiKeyStatusRequest, UpdateAuthConfigRequest, UpdateUserPasswordRequest,
+        UserResponse,
     },
     routes::create_router,
 };
@@ -121,12 +122,12 @@ async fn test_login_success_and_failure() {
 }
 
 #[tokio::test]
-async fn test_api_key_management_flow() {
+async fn test_non_admin_can_manage_own_api_keys() {
     let Some(ctx) = try_create_test_server().await else {
         return;
     };
 
-    let login = ctx
+    let admin_login = ctx
         .server
         .post("/auth/login")
         .json(&LoginRequest {
@@ -134,57 +135,100 @@ async fn test_api_key_management_flow() {
             password: ctx.password.clone(),
         })
         .await;
-    let body: Value = login.json();
-    let token = body["token"].as_str().unwrap();
+    let admin_body: Value = admin_login.json();
+    let admin_token = admin_body["token"].as_str().unwrap();
 
-    let (name, value) = bearer_headers(token);
-    let create = ctx
+    let new_username = format!(
+        "user_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let password = "userpass123".to_string();
+
+    let (admin_header_name, admin_header_value) = bearer_headers(admin_token);
+    let create_user = ctx
         .server
-        .post("/auth/api-keys")
-        .add_header(name, value)
-        .json(&CreateApiKeyRequest {
-            name: "integration-key".to_string(),
-            rate_limit_per_minute: 5,
+        .post("/auth/users")
+        .add_header(admin_header_name.clone(), admin_header_value.clone())
+        .json(&CreateUserRequest {
+            username: new_username.clone(),
+            password: password.clone(),
+            is_admin: false,
         })
         .await;
-    create.assert_status(StatusCode::OK);
-    let created: Value = create.json();
-    let key_id = Uuid::parse_str(created["id"].as_str().unwrap()).unwrap();
+    create_user.assert_status(StatusCode::OK);
 
-    let (name, value) = bearer_headers(token);
+    let user_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username.clone(),
+            password: password.clone(),
+        })
+        .await;
+    user_login.assert_status_ok();
+    let user_body: Value = user_login.json();
+    let user_token = user_body["token"].as_str().unwrap();
+
+    let (user_header_name, user_header_value) = bearer_headers(user_token);
+    let create_key = ctx
+        .server
+        .post("/auth/api-keys")
+        .add_header(user_header_name.clone(), user_header_value.clone())
+        .json(&CreateApiKeyRequest {
+            name: "non-admin-key".to_string(),
+            rate_limit_per_minute: 10,
+        })
+        .await;
+    create_key.assert_status(StatusCode::OK);
+    let created_key: Value = create_key.json();
+    let key_id = Uuid::parse_str(created_key["id"].as_str().unwrap()).unwrap();
+
     let list = ctx
         .server
         .get("/auth/api-keys")
-        .add_header(name, value)
+        .add_header(user_header_name.clone(), user_header_value.clone())
         .await;
     list.assert_status(StatusCode::OK);
 
-    let (name, value) = bearer_headers(token);
     let disable = ctx
         .server
         .patch(&format!("/auth/api-keys/{}/status", key_id))
-        .add_header(name, value)
+        .add_header(user_header_name.clone(), user_header_value.clone())
         .json(&UpdateApiKeyStatusRequest { enable: false })
         .await;
     disable.assert_status(StatusCode::NO_CONTENT);
 
-    let (name, value) = bearer_headers(token);
+    let enable = ctx
+        .server
+        .patch(&format!("/auth/api-keys/{}/status", key_id))
+        .add_header(user_header_name.clone(), user_header_value.clone())
+        .json(&UpdateApiKeyStatusRequest { enable: true })
+        .await;
+    enable.assert_status(StatusCode::NO_CONTENT);
+
     let reset = ctx
         .server
         .post(&format!("/auth/api-keys/{}/reset-failures", key_id))
-        .add_header(name, value)
+        .add_header(user_header_name.clone(), user_header_value.clone())
         .json(&ResetApiKeyFailuresRequest {})
         .await;
     reset.assert_status(StatusCode::NO_CONTENT);
+
+    let delete = ctx
+        .server
+        .delete(&format!("/auth/api-keys/{}", key_id))
+        .add_header(user_header_name, user_header_value)
+        .await;
+    delete.assert_status(StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
-async fn test_auth_configs_requires_admin() {
+async fn test_auth_configs_require_admin() {
     let Some(ctx) = try_create_test_server().await else {
         return;
     };
 
-    let login = ctx
+    let admin_login = ctx
         .server
         .post("/auth/login")
         .json(&LoginRequest {
@@ -192,16 +236,63 @@ async fn test_auth_configs_requires_admin() {
             password: ctx.password.clone(),
         })
         .await;
-    let body: Value = login.json();
-    let token = body["token"].as_str().unwrap();
+    let admin_body: Value = admin_login.json();
+    let admin_token = admin_body["token"].as_str().unwrap();
 
-    let (name, value) = bearer_headers(token);
+    let (name, value) = bearer_headers(admin_token);
     let response = ctx
         .server
         .get("/auth/configs")
         .add_header(name, value)
         .await;
     response.assert_status(StatusCode::OK);
+
+    let new_username = format!(
+        "user_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let password = "configtest123".to_string();
+
+    let (admin_header_name, admin_header_value) = bearer_headers(admin_token);
+    let create_user = ctx
+        .server
+        .post("/auth/users")
+        .add_header(admin_header_name, admin_header_value)
+        .json(&CreateUserRequest {
+            username: new_username.clone(),
+            password: password.clone(),
+            is_admin: false,
+        })
+        .await;
+    create_user.assert_status(StatusCode::OK);
+
+    let user_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username.clone(),
+            password: password.clone(),
+        })
+        .await;
+    user_login.assert_status_ok();
+    let user_body: Value = user_login.json();
+    let user_token = user_body["token"].as_str().unwrap();
+    let (user_header_name, user_header_value) = bearer_headers(user_token);
+
+    let forbidden_get = ctx
+        .server
+        .get("/auth/configs")
+        .add_header(user_header_name.clone(), user_header_value.clone())
+        .await;
+    forbidden_get.assert_status(StatusCode::FORBIDDEN);
+
+    let forbidden_patch = ctx
+        .server
+        .patch("/auth/configs")
+        .add_header(user_header_name, user_header_value)
+        .json(&UpdateAuthConfigRequest { entries: vec![] })
+        .await;
+    forbidden_patch.assert_status(StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
