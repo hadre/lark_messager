@@ -1052,3 +1052,11 @@ docker compose中mysql安装可以删除，应该采用了mysql url的方式去�
 2. 更新应用与测试服务的环境变量配置，新增必填提示确保 CI/CD 提前显式传入连接字符串。
 3. 保留日志卷与 builder/runtime 分层，简化 GitHub Actions 在外部数据库环境下的部署与测试流程。
 
+# [2025-09-25 11:56:39][GHCR 镜像发布配置]
+## Prompt内容
+我想构建镜像并发布到GHCR上，帮我修改docker-image.yml
+
+## 执行内容总结
+1. 为 Docker 构建任务添加 packages 写权限，使用仓库路径生成 GHCR 镜像标识。
+2. 将登录和推送步骤限制为非 pull_request 事件，避免 PR 分支向注册表推送。
+3. 扩展镜像标签元数据，覆盖分支、tag、短 SHA 与 latest，确保推送版本清晰可追踪。
