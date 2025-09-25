@@ -507,7 +507,7 @@ impl Database {
         if let Some(sender_id) = filters.sender_id {
             query_builder
                 .push(" AND m.sender_id = ")
-                .push_bind(sender_id);
+                .push_bind(sender_id.to_string());
         }
 
         if let Some(sender_type) = &filters.sender_type {
@@ -547,10 +547,23 @@ impl Database {
             .push(" ORDER BY m.timestamp DESC LIMIT ")
             .push_bind(limit);
 
-        let query = query_builder.build_query_as::<MessageLogRecord>();
-        let records = query.fetch_all(&self.pool).await?;
+        let query = query_builder.build();
+        let rows = query.fetch_all(&self.pool).await?;
 
-        Ok(records)
+        Ok(rows
+            .into_iter()
+            .map(|row| MessageLogRecord {
+                id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
+                sender_type: row.get("sender_type"),
+                sender_id: Uuid::parse_str(row.get::<String, _>("sender_id").as_str()).unwrap(),
+                sender_name: row.get("sender_name"),
+                owner_username: row.get("owner_username"),
+                recipient: row.get("recipient"),
+                message: row.get("message"),
+                status: row.get("status"),
+                timestamp: row.get("timestamp"),
+            })
+            .collect())
     }
 
     // ---------------------------------------------------------------------
@@ -645,9 +658,25 @@ impl Database {
             .push(" ORDER BY o.created_at DESC LIMIT ")
             .push_bind(limit);
 
-        let query = query_builder.build_query_as::<OperationLogRecord>();
-        let records = query.fetch_all(&self.pool).await?;
+        let query = query_builder.build();
+        let rows = query.fetch_all(&self.pool).await?;
 
-        Ok(records)
+        Ok(rows
+            .into_iter()
+            .map(|row| OperationLogRecord {
+                id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
+                user_id: row
+                    .get::<Option<String>, _>("user_id")
+                    .and_then(|s| Uuid::parse_str(&s).ok()),
+                username: row.get("username"),
+                is_admin: row.get::<Option<i8>, _>("is_admin").map(|flag| flag != 0),
+                is_super_admin: row
+                    .get::<Option<i8>, _>("is_super_admin")
+                    .map(|flag| flag != 0),
+                operation_type: row.get("operation_type"),
+                detail: row.get("detail"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
     }
 }

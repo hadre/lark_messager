@@ -171,10 +171,7 @@ async fn test_operation_log_query_filters() {
 
     assert!(!logs.is_empty());
     assert_eq!(logs[0].operation_type, "user.test");
-    assert_eq!(
-        logs[0].owner_username.as_deref(),
-        Some(user.username.as_str())
-    );
+    assert_eq!(logs[0].username.as_deref(), Some(user.username.as_str()));
 }
 
 #[tokio::test]

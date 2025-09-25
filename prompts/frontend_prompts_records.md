@@ -106,3 +106,24 @@
 ## 执行内容总结
 1. 将 JWT 生命周期固定为 1800 秒，登录与刷新始终使用常量窗口，并调整扩展逻辑。
 2. 移除 `jwt_extension_seconds` 配置及迁移种子，并更新 README 说明。
+# [2025-09-25 16:58:50][修复操作日志查询单测]
+## Prompt内容
+修复操作日志查询的单元测试问题：
+---- test_operation_log_query_filters stdout ----
+
+thread 'test_operation_log_query_filters' panicked at tests/unit_tests.rs:170:10:
+called `Result::unwrap()` on an `Err` value: Database(ColumnDecode { index: "\"id\"", source: "Expected 16 bytes, got 36; `Uuid` uses binary format for MySQL/MariaDB. For text-formatted UUIDs, use `uuid::fmt::Hyphenated` instead of `Uuid`." })
+stack backtrace:
+## 执行内容总结
+1. 修改日志查询结果解析逻辑，手动从字符串列解析 UUID，避免 SQLx 期望二进制 UUID 导致的解码错误。
+2. 再次运行单元测试，确认操作日志查询测试恢复通过。
+# [2025-09-25 17:04:43][修复消息日志筛选绑定]
+## Prompt内容
+修复消息日志查询的问题
+---- test_message_log_query_filters stdout ----
+
+thread 'test_message_log_query_filters' panicked at tests/unit_tests.rs:218:5:
+assertion failed: !logs.is_empty()
+## 执行内容总结
+1. 将消息日志筛选中的 `sender_id` 绑定改为字符串，以匹配 `VARCHAR` 存储的 UUID。
+2. 再次运行单元测试，消息日志查询能够返回期望记录。
