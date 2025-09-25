@@ -154,6 +154,8 @@ pub struct JwtClaims {
     pub exp: usize,
     pub iat: usize,
     pub is_admin: bool,
+    #[serde(default)]
+    pub is_super_admin: bool,
 }
 
 /// 认证服务
@@ -278,6 +280,7 @@ impl AuthService {
             exp: expires.timestamp() as usize,
             iat: now.timestamp() as usize,
             is_admin: user.is_admin,
+            is_super_admin: user.is_super_admin,
         };
 
         let token = encode(
@@ -326,6 +329,7 @@ impl AuthService {
             exp: new_expires.timestamp() as usize,
             iat: Utc::now().timestamp() as usize,
             is_admin: user.is_admin,
+            is_super_admin: user.is_super_admin,
         };
 
         let new_token = encode(
@@ -365,10 +369,31 @@ impl AuthService {
         password: &str,
         is_admin: bool,
     ) -> AppResult<User> {
+        if username.trim().is_empty() {
+            return Err(AppError::Validation("Username cannot be empty".to_string()));
+        }
+
+        if password.trim().is_empty() {
+            return Err(AppError::Validation("Password cannot be empty".to_string()));
+        }
+
         let password_hash = self.hash_password(password)?;
         self.db
             .create_user(username, &password_hash, is_admin)
             .await
+    }
+
+    pub async fn create_super_admin(&self, username: &str, password: &str) -> AppResult<User> {
+        if username.trim().is_empty() {
+            return Err(AppError::Validation("Username cannot be empty".to_string()));
+        }
+
+        if password.trim().is_empty() {
+            return Err(AppError::Validation("Password cannot be empty".to_string()));
+        }
+
+        let password_hash = self.hash_password(password)?;
+        self.db.create_super_admin(username, &password_hash).await
     }
 
     pub async fn change_own_password(
@@ -412,10 +437,17 @@ impl AuthService {
     }
 
     pub async fn delete_user(&self, user_id: Uuid) -> AppResult<()> {
-        self.db
+        let target = self
+            .db
             .get_user_by_id(&user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+        if target.is_super_admin {
+            return Err(AppError::Conflict(
+                "Super admin account cannot be deleted".to_string(),
+            ));
+        }
 
         self.db.delete_user(&user_id).await
     }

@@ -8,6 +8,7 @@ struct Options {
     username: String,
     password: String,
     is_admin: bool,
+    is_super_admin: bool,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -20,6 +21,7 @@ fn parse_args() -> Result<Options, String> {
     let mut username = None;
     let mut password = None;
     let mut is_admin = true; // 默认创建管理员
+    let mut is_super_admin = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -42,6 +44,11 @@ fn parse_args() -> Result<Options, String> {
                 is_admin = false;
                 i += 1;
             }
+            "--super-admin" => {
+                is_super_admin = true;
+                is_admin = true;
+                i += 1;
+            }
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -52,6 +59,14 @@ fn parse_args() -> Result<Options, String> {
         }
     }
 
+    if is_super_admin && !is_admin {
+        return Err("Super admin must also be admin".to_string());
+    }
+
+    if is_super_admin && args.contains(&"--non-admin".to_string()) {
+        return Err("--super-admin cannot be combined with --non-admin".to_string());
+    }
+
     let username = username.ok_or_else(|| "--user is required".to_string())?;
     let password = password.ok_or_else(|| "--password is required".to_string())?;
 
@@ -59,6 +74,7 @@ fn parse_args() -> Result<Options, String> {
         username,
         password,
         is_admin,
+        is_super_admin,
     })
 }
 
@@ -74,6 +90,7 @@ fn print_help() {
     println!("    -u, --user <USERNAME>         Username to create");
     println!("    -p, --password <PASSWORD>     Password for the user");
     println!("        --non-admin               Create a non-admin user");
+    println!("        --super-admin            Create the unique super admin (only once)");
     println!("    -h, --help                    Show this help message");
 }
 
@@ -90,18 +107,29 @@ async fn main() -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let user = auth_service
-        .create_user(&options.username, &options.password, options.is_admin)
-        .await
-        .map_err(|e| format!("Failed to create user: {}", e))?;
+    let user = if options.is_super_admin {
+        auth_service
+            .create_super_admin(&options.username, &options.password)
+            .await
+            .map_err(|e| format!("Failed to create super admin: {}", e))?
+    } else {
+        auth_service
+            .create_user(&options.username, &options.password, options.is_admin)
+            .await
+            .map_err(|e| format!("Failed to create user: {}", e))?
+    };
 
     println!("=== Unified Auth User Created ===");
     println!("User ID   : {}", user.id);
     println!("Username  : {}", user.username);
-    println!(
-        "Role      : {}",
-        if user.is_admin { "admin" } else { "user" }
-    );
+    let role = if user.is_super_admin {
+        "super_admin"
+    } else if user.is_admin {
+        "admin"
+    } else {
+        "user"
+    };
+    println!("Role      : {}", role);
     println!("Created At: {}", user.created_at);
     println!();
     println!(

@@ -48,6 +48,10 @@ pub enum AppError {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    /// 资源状态冲突
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     /// 飞书 API 调用错误
     /// 包括网络错误、API 限流、权限不足等
     #[error("Lark API error: {0}")]
@@ -99,6 +103,7 @@ impl IntoResponse for AppError {
             AppError::Jwt(_) => (StatusCode::UNAUTHORIZED, "Authentication failed"),
             AppError::Unauthorized(_) => (StatusCode::FORBIDDEN, "Access denied"),
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, "Invalid request"),
+            AppError::Conflict(_) => (StatusCode::CONFLICT, "Conflict"),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, "Resource not found"),
             AppError::RateLimit => (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded"),
             AppError::Lark(_) => (StatusCode::BAD_GATEWAY, "External service error"),

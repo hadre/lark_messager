@@ -14,9 +14,9 @@ use crate::error::{AppError, AppResult};
 use crate::lark::LarkClient;
 use crate::models::{
     ApiKeyStatus, ApiKeySummary, AuthConfigResponse, CreateApiKeyRequest, CreateApiKeyResponse,
-    CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageResponse,
-    MessageStatus, ResetApiKeyFailuresRequest, SendGroupMessageRequest, SendMessageRequest,
-    SenderType, UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest,
+    CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageResponse, MessageStatus,
+    ResetApiKeyFailuresRequest, SendGroupMessageRequest, SendMessageRequest, SenderType,
+    UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest,
     UpdateUserPasswordRequest, User, UserResponse, VerifyRecipientRequest, VerifyRecipientResponse,
 };
 use axum::{
@@ -85,6 +85,12 @@ pub async fn create_user(
 ) -> AppResult<Json<UserResponse>> {
     let user = authenticate_user_from_jwt(&headers, &state).await?;
     ensure_admin(&user)?;
+
+    if request.is_admin && !user.is_super_admin {
+        return Err(AppError::Unauthorized(
+            "Super admin privileges required to create admin users".to_string(),
+        ));
+    }
 
     let created = state
         .auth

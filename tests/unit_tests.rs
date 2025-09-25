@@ -33,6 +33,7 @@ async fn test_create_user_and_api_key_flow() {
         .unwrap();
     assert_eq!(user.username, username);
     assert!(user.is_admin);
+    assert!(!user.is_super_admin);
 
     let api_key = auth
         .create_api_key(
@@ -70,6 +71,7 @@ async fn test_api_key_status_and_failure_reset() {
         .create_user(&username, "AnotherPassw0rd!", false)
         .await
         .unwrap();
+    assert!(!user.is_super_admin);
 
     let api_key = auth
         .create_api_key(

@@ -441,6 +441,7 @@ async fn test_admin_can_create_user_and_non_admin_is_forbidden() {
     let created: UserResponse = create.json();
     assert_eq!(created.username, new_username);
     assert!(!created.is_admin);
+    assert!(!created.is_super_admin);
 
     let login_non_admin = ctx
         .server
@@ -469,6 +470,42 @@ async fn test_admin_can_create_user_and_non_admin_is_forbidden() {
         })
         .await;
     forbidden.assert_status(StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_admin_cannot_create_admin_without_super_privileges() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let admin_token = body["token"].as_str().unwrap();
+
+    let (header_name, header_value) = bearer_headers(admin_token);
+    let response = ctx
+        .server
+        .post("/auth/users")
+        .add_header(header_name, header_value)
+        .json(&CreateUserRequest {
+            username: format!(
+                "admin_candidate_{}",
+                Uuid::new_v4().to_string().split('-').next().unwrap()
+            ),
+            password: "AnotherPass123!".to_string(),
+            is_admin: true,
+        })
+        .await;
+
+    response.assert_status(StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -508,6 +545,7 @@ async fn test_user_can_update_own_password_with_current_secret() {
         .await;
     create.assert_status(StatusCode::OK);
     let created: UserResponse = create.json();
+    assert!(!created.is_super_admin);
 
     let user_login = ctx
         .server
@@ -653,6 +691,7 @@ async fn test_cannot_update_other_users_password() {
         .await;
     create_first.assert_status(StatusCode::OK);
     let first_user: UserResponse = create_first.json();
+    assert!(!first_user.is_super_admin);
 
     let create_second = ctx
         .server
@@ -689,7 +728,7 @@ async fn test_cannot_update_other_users_password() {
         .await;
     user_one_login.assert_status_ok();
     let user_one_body: Value = user_one_login.json();
-    let user_one_token = user_one_body["token"].as_str().unwrap();
+    let _user_one_token = user_one_body["token"].as_str().unwrap();
 
     let user_two_login = ctx
         .server

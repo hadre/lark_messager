@@ -31,6 +31,8 @@ pub struct User {
     pub password_hash: String,
     /// 是否为管理员
     pub is_admin: bool,
+    /// 是否为超级管理员（唯一且拥有全部权限）
+    pub is_super_admin: bool,
     /// 账户创建时间
     pub created_at: DateTime<Utc>,
     /// 最后更新时间
@@ -134,6 +136,7 @@ pub struct UserResponse {
     pub id: Uuid,
     pub username: String,
     pub is_admin: bool,
+    pub is_super_admin: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -151,6 +154,7 @@ impl From<User> for UserResponse {
             id: user.id,
             username: user.username,
             is_admin: user.is_admin,
+            is_super_admin: user.is_super_admin,
             created_at: user.created_at,
             updated_at: user.updated_at,
         }

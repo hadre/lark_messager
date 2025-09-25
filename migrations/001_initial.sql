@@ -6,9 +6,30 @@ CREATE TABLE auth_users (
     username VARCHAR(255) UNIQUE NOT NULL COMMENT '登录用户名，唯一',
     password_hash VARCHAR(255) NOT NULL COMMENT '使用 Argon2 哈希后的密码',
     is_admin BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否为管理员账号',
+    is_super_admin BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否为唯一超级管理员',
     created_at DATETIME NOT NULL COMMENT '创建时间',
     updated_at DATETIME NOT NULL COMMENT '最后更新时间'
 ) COMMENT='系统用户表';
+
+-- 默认创建超级管理员账户，部署后务必立即修改密码
+INSERT INTO auth_users (
+    id,
+    username,
+    password_hash,
+    is_admin,
+    is_super_admin,
+    created_at,
+    updated_at
+)
+VALUES (
+    UUID(),
+    'super_admin',
+    '$argon2id$v=19$m=19456,t=2,p=1$uQbCKfG4Z5yYjk4R9U6v3A$8AsvXxKFrE2pKm8GhmkAJO5LXIJudHFqrkF2bmBILxs',
+    TRUE,
+    TRUE,
+    NOW(),
+    NOW()
+);
 
 -- API Key 元数据及安全控制
 CREATE TABLE auth_api_keys (

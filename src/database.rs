@@ -8,7 +8,7 @@
  * - 消息日志记录
  */
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::models::{ApiKey, AuthConfig, MessageLog, User};
 use chrono::Utc;
 use sqlx::{MySql, MySqlPool, Pool, Row};
@@ -52,14 +52,16 @@ impl Database {
 
         sqlx::query(
             r#"
-            INSERT INTO auth_users (id, username, password_hash, is_admin, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO auth_users (
+                id, username, password_hash, is_admin, is_super_admin, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(id.to_string())
         .bind(username)
         .bind(password_hash)
         .bind(is_admin)
+        .bind(false)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -70,6 +72,56 @@ impl Database {
             username: username.to_string(),
             password_hash: password_hash.to_string(),
             is_admin,
+            is_super_admin: false,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    pub async fn create_super_admin(&self, username: &str, password_hash: &str) -> AppResult<User> {
+        let mut tx = self.pool.begin().await?;
+
+        let existing_super_admins: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM auth_users
+            WHERE is_super_admin = 1
+            "#,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if existing_super_admins > 0 {
+            tx.rollback().await.ok();
+            return Err(AppError::Conflict("Super admin already exists".to_string()));
+        }
+
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"
+            INSERT INTO auth_users (
+                id, username, password_hash, is_admin, is_super_admin, created_at, updated_at
+            ) VALUES (?, ?, ?, 1, 1, ?, ?)
+            "#,
+        )
+        .bind(id.to_string())
+        .bind(username)
+        .bind(password_hash)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(User {
+            id,
+            username: username.to_string(),
+            password_hash: password_hash.to_string(),
+            is_admin: true,
+            is_super_admin: true,
             created_at: now,
             updated_at: now,
         })
@@ -78,7 +130,7 @@ impl Database {
     pub async fn get_user_by_username(&self, username: &str) -> AppResult<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, password_hash, is_admin, created_at, updated_at
+            SELECT id, username, password_hash, is_admin, is_super_admin, created_at, updated_at
             FROM auth_users
             WHERE username = ?
             "#,
@@ -92,6 +144,7 @@ impl Database {
             username: row.get("username"),
             password_hash: row.get("password_hash"),
             is_admin: row.get::<i8, _>("is_admin") != 0,
+            is_super_admin: row.get::<i8, _>("is_super_admin") != 0,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         }))
@@ -100,7 +153,7 @@ impl Database {
     pub async fn get_user_by_id(&self, user_id: &Uuid) -> AppResult<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, password_hash, is_admin, created_at, updated_at
+            SELECT id, username, password_hash, is_admin, is_super_admin, created_at, updated_at
             FROM auth_users
             WHERE id = ?
             "#,
@@ -114,6 +167,7 @@ impl Database {
             username: row.get("username"),
             password_hash: row.get("password_hash"),
             is_admin: row.get::<i8, _>("is_admin") != 0,
+            is_super_admin: row.get::<i8, _>("is_super_admin") != 0,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         }))
