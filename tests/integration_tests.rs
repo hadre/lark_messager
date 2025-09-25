@@ -7,7 +7,7 @@ use lark_messager::{
     lark::LarkClient,
     models::{
         CreateApiKeyRequest, CreateUserRequest, LoginRequest, ResetApiKeyFailuresRequest,
-        UpdateApiKeyStatusRequest, UserResponse,
+        UpdateApiKeyStatusRequest, UpdateUserPasswordRequest, UserResponse,
     },
     routes::create_router,
 };
@@ -271,4 +271,391 @@ async fn test_admin_can_create_user_and_non_admin_is_forbidden() {
         })
         .await;
     forbidden.assert_status(StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_user_can_update_own_password_with_current_secret() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let admin_token = body["token"].as_str().unwrap();
+
+    let new_username = format!(
+        "user_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let original_password = "origpass123".to_string();
+
+    let (header_name, header_value) = bearer_headers(admin_token);
+    let create = ctx
+        .server
+        .post("/auth/users")
+        .add_header(header_name.clone(), header_value.clone())
+        .json(&CreateUserRequest {
+            username: new_username.clone(),
+            password: original_password.clone(),
+            is_admin: false,
+        })
+        .await;
+    create.assert_status(StatusCode::OK);
+    let created: UserResponse = create.json();
+
+    let user_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username.clone(),
+            password: original_password.clone(),
+        })
+        .await;
+    user_login.assert_status_ok();
+    let user_body: Value = user_login.json();
+    let user_token = user_body["token"].as_str().unwrap();
+    let (user_header_name, user_header_value) = bearer_headers(user_token);
+
+    let updated_password = "updatedpass456".to_string();
+    let update = ctx
+        .server
+        .patch(&format!("/auth/users/{}/password", created.id))
+        .add_header(user_header_name, user_header_value)
+        .json(&UpdateUserPasswordRequest {
+            current_password: original_password.clone(),
+            new_password: updated_password.clone(),
+        })
+        .await;
+    update.assert_status(StatusCode::OK);
+
+    let old_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username.clone(),
+            password: original_password,
+        })
+        .await;
+    old_login.assert_status(StatusCode::UNAUTHORIZED);
+
+    let new_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username,
+            password: updated_password,
+        })
+        .await;
+    new_login.assert_status(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_admin_can_delete_user() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let admin_token = body["token"].as_str().unwrap();
+
+    let new_username = format!(
+        "user_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let password = "deleteme123".to_string();
+
+    let (header_name, header_value) = bearer_headers(admin_token);
+    let create = ctx
+        .server
+        .post("/auth/users")
+        .add_header(header_name.clone(), header_value.clone())
+        .json(&CreateUserRequest {
+            username: new_username.clone(),
+            password: password.clone(),
+            is_admin: false,
+        })
+        .await;
+    create.assert_status(StatusCode::OK);
+    let created: UserResponse = create.json();
+
+    let delete = ctx
+        .server
+        .delete(&format!("/auth/users/{}", created.id))
+        .add_header(header_name, header_value)
+        .await;
+    delete.assert_status(StatusCode::NO_CONTENT);
+
+    let login_deleted = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username,
+            password,
+        })
+        .await;
+    login_deleted.assert_status(StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_cannot_update_other_users_password() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let admin_token = body["token"].as_str().unwrap();
+
+    let user_one = format!(
+        "user1_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let user_two = format!(
+        "user2_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let password_one = "password1".to_string();
+    let password_two = "password2".to_string();
+
+    let (admin_header_name, admin_header_value) = bearer_headers(admin_token);
+    let create_first = ctx
+        .server
+        .post("/auth/users")
+        .add_header(admin_header_name.clone(), admin_header_value.clone())
+        .json(&CreateUserRequest {
+            username: user_one.clone(),
+            password: password_one.clone(),
+            is_admin: false,
+        })
+        .await;
+    create_first.assert_status(StatusCode::OK);
+    let first_user: UserResponse = create_first.json();
+
+    let create_second = ctx
+        .server
+        .post("/auth/users")
+        .add_header(admin_header_name, admin_header_value)
+        .json(&CreateUserRequest {
+            username: user_two.clone(),
+            password: password_two.clone(),
+            is_admin: false,
+        })
+        .await;
+    create_second.assert_status(StatusCode::OK);
+    let _second_user: UserResponse = create_second.json();
+
+    let (admin_attempt_name, admin_attempt_value) = bearer_headers(admin_token);
+    let admin_attempt = ctx
+        .server
+        .patch(&format!("/auth/users/{}/password", first_user.id))
+        .add_header(admin_attempt_name, admin_attempt_value)
+        .json(&UpdateUserPasswordRequest {
+            current_password: password_one.clone(),
+            new_password: "adminchange".to_string(),
+        })
+        .await;
+    admin_attempt.assert_status(StatusCode::FORBIDDEN);
+
+    let user_one_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: user_one.clone(),
+            password: password_one.clone(),
+        })
+        .await;
+    user_one_login.assert_status_ok();
+    let user_one_body: Value = user_one_login.json();
+    let user_one_token = user_one_body["token"].as_str().unwrap();
+
+    let user_two_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: user_two.clone(),
+            password: password_two.clone(),
+        })
+        .await;
+    user_two_login.assert_status_ok();
+    let user_two_body: Value = user_two_login.json();
+    let user_two_token = user_two_body["token"].as_str().unwrap();
+    let (user_two_header_name, user_two_header_value) = bearer_headers(user_two_token);
+
+    let unauthorized_attempt = ctx
+        .server
+        .patch(&format!("/auth/users/{}/password", first_user.id))
+        .add_header(user_two_header_name, user_two_header_value)
+        .json(&UpdateUserPasswordRequest {
+            current_password: password_one.clone(),
+            new_password: "shouldnotwork".to_string(),
+        })
+        .await;
+    unauthorized_attempt.assert_status(StatusCode::FORBIDDEN);
+
+    let user_one_still_valid = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: user_one,
+            password: password_one,
+        })
+        .await;
+    user_one_still_valid.assert_status(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_update_password_requires_current_password_validation() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let admin_token = body["token"].as_str().unwrap();
+
+    let new_username = format!(
+        "user_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let original_password = "origpass123".to_string();
+
+    let (admin_header_name, admin_header_value) = bearer_headers(admin_token);
+    let create = ctx
+        .server
+        .post("/auth/users")
+        .add_header(admin_header_name, admin_header_value)
+        .json(&CreateUserRequest {
+            username: new_username.clone(),
+            password: original_password.clone(),
+            is_admin: false,
+        })
+        .await;
+    create.assert_status(StatusCode::OK);
+    let created: UserResponse = create.json();
+
+    let user_login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username.clone(),
+            password: original_password.clone(),
+        })
+        .await;
+    user_login.assert_status_ok();
+    let user_body: Value = user_login.json();
+    let user_token = user_body["token"].as_str().unwrap();
+    let (user_header_name, user_header_value) = bearer_headers(user_token);
+
+    let attempt = ctx
+        .server
+        .patch(&format!("/auth/users/{}/password", created.id))
+        .add_header(user_header_name, user_header_value)
+        .json(&UpdateUserPasswordRequest {
+            current_password: "wrongpass".to_string(),
+            new_password: "newpass456".to_string(),
+        })
+        .await;
+    attempt.assert_status(StatusCode::UNAUTHORIZED);
+
+    let login_still_valid = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username,
+            password: original_password,
+        })
+        .await;
+    login_still_valid.assert_status(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_non_admin_cannot_delete_users() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let admin_token = body["token"].as_str().unwrap();
+
+    let new_username = format!(
+        "user_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let password = "regularpass123".to_string();
+
+    let (admin_header_name, admin_header_value) = bearer_headers(admin_token);
+    let create = ctx
+        .server
+        .post("/auth/users")
+        .add_header(admin_header_name, admin_header_value)
+        .json(&CreateUserRequest {
+            username: new_username.clone(),
+            password: password.clone(),
+            is_admin: false,
+        })
+        .await;
+    create.assert_status(StatusCode::OK);
+    let created: UserResponse = create.json();
+
+    let login_non_admin = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username.clone(),
+            password: password.clone(),
+        })
+        .await;
+    login_non_admin.assert_status_ok();
+    let body: Value = login_non_admin.json();
+    let non_admin_token = body["token"].as_str().unwrap();
+
+    let (header_name, header_value) = bearer_headers(non_admin_token);
+    let forbidden_delete = ctx
+        .server
+        .delete(&format!("/auth/users/{}", created.id))
+        .add_header(header_name, header_value)
+        .await;
+    forbidden_delete.assert_status(StatusCode::FORBIDDEN);
 }

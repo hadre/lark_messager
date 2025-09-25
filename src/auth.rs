@@ -315,6 +315,55 @@ impl AuthService {
             .await
     }
 
+    pub async fn change_own_password(
+        &self,
+        requester: &User,
+        current_password: &str,
+        new_password: &str,
+    ) -> AppResult<User> {
+        if new_password.trim().is_empty() {
+            return Err(AppError::Validation(
+                "New password cannot be empty".to_string(),
+            ));
+        }
+
+        let stored_user = self
+            .db
+            .get_user_by_id(&requester.id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+        let valid = self.verify_password(current_password, &stored_user.password_hash)?;
+        if !valid {
+            return Err(AppError::Auth("Current password is incorrect".to_string()));
+        }
+
+        if self.verify_password(new_password, &stored_user.password_hash)? {
+            return Err(AppError::Validation(
+                "New password must differ from current password".to_string(),
+            ));
+        }
+
+        let password_hash = self.hash_password(new_password)?;
+        self.db
+            .update_user_password_hash(&requester.id, &password_hash)
+            .await?;
+
+        self.db
+            .get_user_by_id(&requester.id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("User not found".to_string()))
+    }
+
+    pub async fn delete_user(&self, user_id: Uuid) -> AppResult<()> {
+        self.db
+            .get_user_by_id(&user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+        self.db.delete_user(&user_id).await
+    }
+
     pub fn generate_api_key_secret(&self, length: usize) -> String {
         const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         let mut rng = rand::thread_rng();

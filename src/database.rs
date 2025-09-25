@@ -119,6 +119,44 @@ impl Database {
         }))
     }
 
+    pub async fn update_user_password_hash(
+        &self,
+        user_id: &Uuid,
+        password_hash: &str,
+    ) -> AppResult<()> {
+        let now = Utc::now();
+        sqlx::query(
+            r#"
+            UPDATE auth_users
+            SET password_hash = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(password_hash)
+        .bind(now)
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_user(&self, user_id: &Uuid) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM auth_api_keys WHERE user_id = ?")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query("DELETE FROM auth_users WHERE id = ?")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     // ---------------------------------------------------------------------
     // API Key 管理
     // ---------------------------------------------------------------------

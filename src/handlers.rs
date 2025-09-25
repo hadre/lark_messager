@@ -16,8 +16,8 @@ use crate::models::{
     ApiKeyStatus, ApiKeySummary, AuthConfigResponse, CreateApiKeyRequest, CreateApiKeyResponse,
     CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageResponse, MessageStatus,
     ResetApiKeyFailuresRequest, SendGroupMessageRequest, SendMessageRequest, SenderType,
-    UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest, User,
-    UserResponse, VerifyRecipientRequest, VerifyRecipientResponse,
+    UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest,
+    UpdateUserPasswordRequest, User, UserResponse, VerifyRecipientRequest, VerifyRecipientResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -97,6 +97,44 @@ pub async fn create_user(
     );
 
     Ok(Json(UserResponse::from(created)))
+}
+
+pub async fn update_user_password(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    Json(request): Json<UpdateUserPasswordRequest>,
+) -> AppResult<Json<UserResponse>> {
+    let user = authenticate_user_from_jwt(&headers, &state).await?;
+
+    if user.id != user_id {
+        return Err(AppError::Unauthorized(
+            "Cannot modify another user's password".to_string(),
+        ));
+    }
+
+    let updated = state
+        .auth
+        .change_own_password(&user, &request.current_password, &request.new_password)
+        .await?;
+
+    info!("Password updated for user {}", user.username);
+
+    Ok(Json(UserResponse::from(updated)))
+}
+
+pub async fn delete_user(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    let user = authenticate_user_from_jwt(&headers, &state).await?;
+    ensure_admin(&user)?;
+
+    state.auth.delete_user(user_id).await?;
+    info!("User {} deleted by admin {}", user_id, user.username);
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // -----------------------------------------------------------------------------

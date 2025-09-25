@@ -138,6 +138,13 @@ pub struct UserResponse {
     pub updated_at: DateTime<Utc>,
 }
 
+/// 更新用户密码请求
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateUserPasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
 impl From<User> for UserResponse {
     fn from(user: User) -> Self {
         Self {
