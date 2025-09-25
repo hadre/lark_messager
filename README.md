@@ -104,6 +104,8 @@ curl http://localhost:8080/health
 #### Session Authentication (JWT)
 Use `/auth/login` with a username/password to obtain a short-lived JWT for managing API keys and configuration. Supply the token in `Authorization: Bearer <token>` when calling management endpoints.
 
+Tokens expire 30 minutes (1800s) after issue. Calling `/auth/token/extend` refreshes the session by another 30 minutes from the later of the current expiry or now; it does not stack additional time beyond that window.
+
 #### Signed API Requests (HMAC)
 Runtime calls to messaging endpoints must include the following headers:
 

@@ -225,8 +225,8 @@ async fn test_extend_jwt_token_uses_configured_window() {
     assert!(new_exp > initial_exp);
     let diff = (new_exp - initial_exp).num_seconds();
     assert!(
-        diff >= 1,
-        "expected expiration to be extended, diff {diff}s"
+        (1790..=1820).contains(&diff),
+        "expected expiration extension around 1800s, diff {diff}s"
     );
 }
 
