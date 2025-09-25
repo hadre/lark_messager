@@ -14,10 +14,10 @@ use crate::error::{AppError, AppResult};
 use crate::lark::LarkClient;
 use crate::models::{
     ApiKeyStatus, ApiKeySummary, AuthConfigResponse, CreateApiKeyRequest, CreateApiKeyResponse,
-    HealthResponse, LoginRequest, LoginResponse, MessageResponse, MessageStatus,
+    CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageResponse, MessageStatus,
     ResetApiKeyFailuresRequest, SendGroupMessageRequest, SendMessageRequest, SenderType,
     UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest, User,
-    VerifyRecipientRequest, VerifyRecipientResponse,
+    UserResponse, VerifyRecipientRequest, VerifyRecipientResponse,
 };
 use axum::{
     extract::{Path, State},
@@ -72,6 +72,31 @@ pub async fn login(
     info!("Successful login for user: {}", user.username);
 
     Ok(Json(LoginResponse { token, expires_at }))
+}
+
+// -----------------------------------------------------------------------------
+// 用户管理（管理员）
+// -----------------------------------------------------------------------------
+
+pub async fn create_user(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(request): Json<CreateUserRequest>,
+) -> AppResult<Json<UserResponse>> {
+    let user = authenticate_user_from_jwt(&headers, &state).await?;
+    ensure_admin(&user)?;
+
+    let created = state
+        .auth
+        .create_user(&request.username, &request.password, request.is_admin)
+        .await?;
+
+    info!(
+        "User created: {} (is_admin: {}) by admin {}",
+        created.username, created.is_admin, user.username
+    );
+
+    Ok(Json(UserResponse::from(created)))
 }
 
 // -----------------------------------------------------------------------------

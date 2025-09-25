@@ -971,3 +971,12 @@ src/handlers.rs 中send_message把一些校验前置,避免权限查询完后发
 1. 调整 `update_api_key_status`，仅在状态由禁用切换为启用时调用 `reset`；删除 `delete_api_key`、`update_api_key_rate_limit` 中的多余重置。
 2. 移除失败阈值禁用时的限流重置，避免冗余清理。
 3. `cargo fmt`、`cargo check` 验证新逻辑通过。
+
+# [2025-09-24 18:16:14][添加管理员创建用户接口]
+## Prompt内容
+给我添加一个创建用户的接口，当前用户只能由管理员创建
+
+## 执行内容总结
+1. 新增 `/auth/users` 管理端路由与处理器，复用 `AuthService::create_user` 并校验 JWT 用户具备管理员权限。
+2. 扩展模型层定义 `CreateUserRequest`/`UserResponse`，避免返回敏感哈希字段。
+3. 添加集成测试验证管理员可成功创建用户及普通用户被拒；运行 `cargo test` 时集成测试通过，单元测试受沙箱数据库权限限制未能完成。

@@ -6,7 +6,8 @@ use lark_messager::{
     handlers::AppState,
     lark::LarkClient,
     models::{
-        CreateApiKeyRequest, LoginRequest, ResetApiKeyFailuresRequest, UpdateApiKeyStatusRequest,
+        CreateApiKeyRequest, CreateUserRequest, LoginRequest, ResetApiKeyFailuresRequest,
+        UpdateApiKeyStatusRequest, UserResponse,
     },
     routes::create_router,
 };
@@ -201,4 +202,73 @@ async fn test_auth_configs_requires_admin() {
         .add_header(name, value)
         .await;
     response.assert_status(StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_admin_can_create_user_and_non_admin_is_forbidden() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let body: Value = login.json();
+    let admin_token = body["token"].as_str().unwrap();
+
+    let new_username = format!(
+        "user_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let new_password = "newpass123".to_string();
+
+    let (header_name, header_value) = bearer_headers(admin_token);
+    let create = ctx
+        .server
+        .post("/auth/users")
+        .add_header(header_name, header_value)
+        .json(&CreateUserRequest {
+            username: new_username.clone(),
+            password: new_password.clone(),
+            is_admin: false,
+        })
+        .await;
+    create.assert_status(StatusCode::OK);
+    let created: UserResponse = create.json();
+    assert_eq!(created.username, new_username);
+    assert!(!created.is_admin);
+
+    let login_non_admin = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: new_username.clone(),
+            password: new_password.clone(),
+        })
+        .await;
+    login_non_admin.assert_status_ok();
+    let non_admin_body: Value = login_non_admin.json();
+    let non_admin_token = non_admin_body["token"].as_str().unwrap();
+
+    let (header_name, header_value) = bearer_headers(non_admin_token);
+    let forbidden = ctx
+        .server
+        .post("/auth/users")
+        .add_header(header_name, header_value)
+        .json(&CreateUserRequest {
+            username: format!(
+                "user_{}",
+                Uuid::new_v4().to_string().split('-').next().unwrap()
+            ),
+            password: "anotherpass123".to_string(),
+            is_admin: false,
+        })
+        .await;
+    forbidden.assert_status(StatusCode::FORBIDDEN);
 }

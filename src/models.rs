@@ -120,6 +120,36 @@ pub struct LoginResponse {
     pub expires_at: DateTime<Utc>,
 }
 
+/// 创建用户请求（仅管理员）
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    pub is_admin: bool,
+}
+
+/// 用户响应数据（不包含敏感字段）
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserResponse {
+    pub id: Uuid,
+    pub username: String,
+    pub is_admin: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<User> for UserResponse {
+    fn from(user: User) -> Self {
+        Self {
+            id: user.id,
+            username: user.username,
+            is_admin: user.is_admin,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
+        }
+    }
+}
+
 /// 创建 API Key 请求
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateApiKeyRequest {
