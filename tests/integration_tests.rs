@@ -2,6 +2,7 @@ use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum_test::TestServer;
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
+use jsonwebtoken::dangerous_insecure_decode;
 use lark_messager::{
     auth::AuthService,
     database::Database,
@@ -14,11 +15,17 @@ use lark_messager::{
     },
     routes::create_router,
 };
+use serde::Deserialize;
 use serde_json::{self, Value};
 use sha2::Sha256;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
+
+#[derive(Debug, Deserialize)]
+struct JwtClaims {
+    sub: String,
+}
 
 fn load_test_env() {
     dotenvy::from_filename(".env.test").ok();
@@ -506,6 +513,87 @@ async fn test_admin_cannot_create_admin_without_super_privileges() {
         .await;
 
     response.assert_status(StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_super_admin_can_create_admin_user() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: "super_admin".to_string(),
+            password: "ChangeMe123!".to_string(),
+        })
+        .await;
+    login.assert_status_ok();
+    let login_body: Value = login.json();
+    let token = login_body["token"].as_str().unwrap();
+
+    let (header_name, header_value) = bearer_headers(token);
+    let admin_username = format!(
+        "promoted_admin_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+    let admin_password = "PromotedPass123!".to_string();
+
+    let create = ctx
+        .server
+        .post("/auth/users")
+        .add_header(header_name.clone(), header_value.clone())
+        .json(&CreateUserRequest {
+            username: admin_username.clone(),
+            password: admin_password.clone(),
+            is_admin: true,
+        })
+        .await;
+    create.assert_status(StatusCode::OK);
+    let created: UserResponse = create.json();
+    assert!(created.is_admin);
+    assert!(!created.is_super_admin);
+
+    let login_new_admin = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: admin_username,
+            password: admin_password,
+        })
+        .await;
+    login_new_admin.assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_super_admin_cannot_delete_self() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: "super_admin".to_string(),
+            password: "ChangeMe123!".to_string(),
+        })
+        .await;
+    login.assert_status_ok();
+    let login_body: Value = login.json();
+    let token = login_body["token"].as_str().unwrap();
+
+    let claims = dangerous_insecure_decode::<JwtClaims>(token).unwrap();
+    let super_admin_id = claims.claims.sub;
+
+    let (header_name, header_value) = bearer_headers(token);
+    let delete = ctx
+        .server
+        .delete(&format!("/auth/users/{super_admin_id}"))
+        .add_header(header_name, header_value)
+        .await;
+    delete.assert_status(StatusCode::CONFLICT);
 }
 
 #[tokio::test]

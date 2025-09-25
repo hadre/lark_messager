@@ -1,6 +1,7 @@
 use lark_messager::{
     auth::AuthService,
     database::Database,
+    error::AppError,
     models::{
         ApiKeyStatus, CreateApiKeyRequest, ResetApiKeyFailuresRequest, UpdateApiKeyStatusRequest,
     },
@@ -103,4 +104,29 @@ async fn test_api_key_status_and_failure_reset() {
     let stored = db.get_api_key_by_id(&api_key.id).await.unwrap().unwrap();
     assert_eq!(stored.failure_count, 0);
     assert!(stored.last_failed_at.is_none());
+}
+
+#[tokio::test]
+async fn test_delete_super_admin_is_blocked() {
+    load_test_env();
+    let db = Database::new_with_migrations(&test_database_url())
+        .await
+        .unwrap();
+    let auth = AuthService::new("unit_test_secret".to_string(), db.clone())
+        .await
+        .unwrap();
+
+    let super_admin = db
+        .get_user_by_username("super_admin")
+        .await
+        .unwrap()
+        .expect("super_admin seed missing");
+
+    let err = auth.delete_user(super_admin.id).await.unwrap_err();
+    match err {
+        AppError::Conflict(message) => {
+            assert!(message.contains("Super admin"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
