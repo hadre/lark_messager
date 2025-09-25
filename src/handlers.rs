@@ -67,11 +67,18 @@ pub async fn login(
         .authenticate_user(&request.username, &request.password)
         .await?;
 
+    let must_reset_password = user.last_login_at.is_none();
+    state.auth.mark_user_logged_in(&user).await?;
+
     let (token, expires_at) = state.auth.generate_jwt_token(&user)?;
 
     info!("Successful login for user: {}", user.username);
 
-    Ok(Json(LoginResponse { token, expires_at }))
+    Ok(Json(LoginResponse {
+        token,
+        expires_at,
+        must_reset_password,
+    }))
 }
 
 // -----------------------------------------------------------------------------
@@ -94,7 +101,12 @@ pub async fn create_user(
 
     let created = state
         .auth
-        .create_user(&request.username, &request.password, request.is_admin)
+        .create_user(
+            Some(user.id),
+            &request.username,
+            &request.password,
+            request.is_admin,
+        )
         .await?;
 
     info!(
@@ -137,7 +149,7 @@ pub async fn delete_user(
     let user = authenticate_user_from_jwt(&headers, &state).await?;
     ensure_admin(&user)?;
 
-    state.auth.delete_user(user_id).await?;
+    state.auth.delete_user(&user, user_id).await?;
     info!("User {} deleted by admin {}", user_id, user.username);
 
     Ok(StatusCode::NO_CONTENT)
@@ -164,6 +176,7 @@ pub async fn extend_jwt_token(
     Ok(Json(LoginResponse {
         token: new_token,
         expires_at,
+        must_reset_password: false,
     }))
 }
 

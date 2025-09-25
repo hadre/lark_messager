@@ -9,9 +9,12 @@
  */
 
 use crate::error::AppResult;
-use crate::models::{ApiKey, AuthConfig, MessageLog, User};
-use chrono::Utc;
-use sqlx::{MySql, MySqlPool, Pool, Row};
+use crate::models::{
+    ApiKey, AuthConfig, MessageLog, OperationLog, OperationLogFilters, OperationLogRecord, User,
+};
+use chrono::{DateTime, Utc};
+use sqlx::{MySql, MySqlPool, Pool, QueryBuilder, Row};
+use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -53,8 +56,8 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO auth_users (
-                id, username, password_hash, is_admin, is_super_admin, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                id, username, password_hash, is_admin, is_super_admin, created_at, updated_at, last_login_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(id.to_string())
@@ -64,6 +67,7 @@ impl Database {
         .bind(false)
         .bind(now)
         .bind(now)
+        .bind(Option::<DateTime<Utc>>::None)
         .execute(&self.pool)
         .await?;
 
@@ -73,6 +77,7 @@ impl Database {
             password_hash: password_hash.to_string(),
             is_admin,
             is_super_admin: false,
+            last_login_at: None,
             created_at: now,
             updated_at: now,
         })
@@ -81,7 +86,7 @@ impl Database {
     pub async fn get_user_by_username(&self, username: &str) -> AppResult<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, password_hash, is_admin, is_super_admin, created_at, updated_at
+            SELECT id, username, password_hash, is_admin, is_super_admin, last_login_at, created_at, updated_at
             FROM auth_users
             WHERE username = ?
             "#,
@@ -96,6 +101,7 @@ impl Database {
             password_hash: row.get("password_hash"),
             is_admin: row.get::<i8, _>("is_admin") != 0,
             is_super_admin: row.get::<i8, _>("is_super_admin") != 0,
+            last_login_at: row.get::<Option<DateTime<Utc>>, _>("last_login_at"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         }))
@@ -104,7 +110,7 @@ impl Database {
     pub async fn get_user_by_id(&self, user_id: &Uuid) -> AppResult<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, password_hash, is_admin, is_super_admin, created_at, updated_at
+            SELECT id, username, password_hash, is_admin, is_super_admin, last_login_at, created_at, updated_at
             FROM auth_users
             WHERE id = ?
             "#,
@@ -119,6 +125,7 @@ impl Database {
             password_hash: row.get("password_hash"),
             is_admin: row.get::<i8, _>("is_admin") != 0,
             is_super_admin: row.get::<i8, _>("is_super_admin") != 0,
+            last_login_at: row.get::<Option<DateTime<Utc>>, _>("last_login_at"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         }))
@@ -142,6 +149,27 @@ impl Database {
         .bind(user_id.to_string())
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    pub async fn update_user_last_login(
+        &self,
+        user_id: &Uuid,
+        last_login_at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE auth_users
+            SET last_login_at = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(last_login_at)
+        .bind(last_login_at)
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -517,5 +545,103 @@ impl Database {
                 timestamp: row.get("timestamp"),
             })
             .collect())
+    }
+
+    // ---------------------------------------------------------------------
+    // 操作日志
+    // ---------------------------------------------------------------------
+
+    pub async fn record_operation_log(
+        &self,
+        user_id: Option<Uuid>,
+        operation_type: &str,
+        detail: &str,
+    ) -> AppResult<OperationLog> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"
+            INSERT INTO operation_logs (id, user_id, operation_type, detail, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(id.to_string())
+        .bind(user_id.map(|value| value.to_string()))
+        .bind(operation_type)
+        .bind(detail)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(OperationLog {
+            id,
+            user_id,
+            operation_type: operation_type.to_string(),
+            detail: detail.to_string(),
+            created_at: now,
+        })
+    }
+
+    /// 异步记录操作日志，不阻塞调用方
+    pub fn log_operation_async(
+        &self,
+        user_id: Option<Uuid>,
+        operation_type: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
+        let db = self.clone();
+        let operation_type = operation_type.into();
+        let detail = detail.into();
+
+        tokio::spawn(async move {
+            if let Err(err) = db
+                .record_operation_log(user_id, &operation_type, &detail)
+                .await
+            {
+                warn!("Failed to record operation log: {}", err);
+            }
+        });
+    }
+
+    pub async fn list_operation_logs(
+        &self,
+        filters: OperationLogFilters,
+    ) -> AppResult<Vec<OperationLogRecord>> {
+        let mut query_builder = QueryBuilder::<MySql>::new(
+            "SELECT o.id, o.user_id, u.username, u.is_admin, u.is_super_admin, o.operation_type, o.detail, o.created_at FROM operation_logs o LEFT JOIN auth_users u ON o.user_id = u.id WHERE 1 = 1",
+        );
+
+        if let Some(user_id) = filters.user_id {
+            query_builder.push(" AND o.user_id = ").push_bind(user_id);
+        }
+
+        if let Some(operation_type) = &filters.operation_type {
+            query_builder
+                .push(" AND o.operation_type = ")
+                .push_bind(operation_type);
+        }
+
+        if let Some(start_time) = filters.start_time {
+            query_builder
+                .push(" AND o.created_at >= ")
+                .push_bind(start_time);
+        }
+
+        if let Some(end_time) = filters.end_time {
+            query_builder
+                .push(" AND o.created_at <= ")
+                .push_bind(end_time);
+        }
+
+        let limit = filters.limit.unwrap_or(100).max(1).min(1000);
+        query_builder
+            .push(" ORDER BY o.created_at DESC LIMIT ")
+            .push_bind(limit);
+
+        let query = query_builder.build_query_as::<OperationLogRecord>();
+        let records = query.fetch_all(&self.pool).await?;
+
+        Ok(records)
     }
 }

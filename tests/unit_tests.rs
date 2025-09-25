@@ -29,7 +29,7 @@ async fn test_create_user_and_api_key_flow() {
 
     let username = format!("unit_user_{}", Uuid::new_v4());
     let user = auth
-        .create_user(&username, "StrongPassw0rd!", true)
+        .create_user(None, &username, "StrongPassw0rd!", true)
         .await
         .unwrap();
     assert_eq!(user.username, username);
@@ -69,7 +69,7 @@ async fn test_api_key_status_and_failure_reset() {
 
     let username = format!("status_user_{}", Uuid::new_v4());
     let user = auth
-        .create_user(&username, "AnotherPassw0rd!", false)
+        .create_user(None, &username, "AnotherPassw0rd!", false)
         .await
         .unwrap();
     assert!(!user.is_super_admin);
@@ -122,7 +122,10 @@ async fn test_delete_super_admin_is_blocked() {
         .unwrap()
         .expect("super_admin seed missing");
 
-    let err = auth.delete_user(super_admin.id).await.unwrap_err();
+    let err = auth
+        .delete_user(&super_admin, super_admin.id)
+        .await
+        .unwrap_err();
     match err {
         AppError::Conflict(message) => {
             assert!(message.contains("Super admin"));

@@ -271,6 +271,12 @@ impl AuthService {
         Ok(user)
     }
 
+    pub async fn mark_user_logged_in(&self, user: &User) -> AppResult<DateTime<Utc>> {
+        let now = Utc::now();
+        self.db.update_user_last_login(&user.id, now).await?;
+        Ok(now)
+    }
+
     pub fn generate_jwt_token(&self, user: &User) -> AppResult<(String, DateTime<Utc>)> {
         let now = Utc::now();
         let expires = now + Duration::hours(24);
@@ -365,6 +371,7 @@ impl AuthService {
 
     pub async fn create_user(
         &self,
+        actor_id: Option<Uuid>,
         username: &str,
         password: &str,
         is_admin: bool,
@@ -378,9 +385,18 @@ impl AuthService {
         }
 
         let password_hash = self.hash_password(password)?;
-        self.db
+        let created = self
+            .db
             .create_user(username, &password_hash, is_admin)
-            .await
+            .await?;
+
+        let detail = format!(
+            "Created user {} (id: {}, is_admin: {})",
+            created.username, created.id, created.is_admin
+        );
+        self.db.log_operation_async(actor_id, "user.create", detail);
+
+        Ok(created)
     }
 
     pub async fn change_own_password(
@@ -417,13 +433,20 @@ impl AuthService {
             .update_user_password_hash(&requester.id, &password_hash)
             .await?;
 
+        let detail = format!(
+            "User {} (id: {}) updated own password",
+            requester.username, requester.id
+        );
+        self.db
+            .log_operation_async(Some(requester.id), "user.password.update", detail);
+
         self.db
             .get_user_by_id(&requester.id)
             .await?
             .ok_or_else(|| AppError::NotFound("User not found".to_string()))
     }
 
-    pub async fn delete_user(&self, user_id: Uuid) -> AppResult<()> {
+    pub async fn delete_user(&self, actor: &User, user_id: Uuid) -> AppResult<User> {
         let target = self
             .db
             .get_user_by_id(&user_id)
@@ -436,7 +459,16 @@ impl AuthService {
             ));
         }
 
-        self.db.delete_user(&user_id).await
+        self.db.delete_user(&user_id).await?;
+
+        let detail = format!(
+            "Deleted user {} (id: {}, is_admin: {})",
+            target.username, target.id, target.is_admin
+        );
+        self.db
+            .log_operation_async(Some(actor.id), "user.delete", detail);
+
+        Ok(target)
     }
 
     pub fn generate_api_key_secret(&self, length: usize) -> String {
@@ -473,6 +505,13 @@ impl AuthService {
                 payload.rate_limit_per_minute,
             )
             .await?;
+
+        let detail = format!(
+            "Created API key {} (name: {}) with rate limit {} for user {}",
+            api_key.id, api_key.name, api_key.rate_limit_per_minute, owner.id
+        );
+        self.db
+            .log_operation_async(Some(owner.id), "api_key.create", detail);
 
         Ok(CreateApiKeyResponse {
             id: api_key.id,
@@ -512,6 +551,13 @@ impl AuthService {
         };
         self.db.update_api_key_status(&key_id, new_status).await?;
 
+        let detail = format!(
+            "Updated API key {} status from {} to {}",
+            key_id, key.status, new_status
+        );
+        self.db
+            .log_operation_async(Some(owner.id), "api_key.update_status", detail);
+
         if payload.enable && key.status != "enabled" {
             self.rate_limiter.reset(key_id);
         }
@@ -532,6 +578,10 @@ impl AuthService {
         }
 
         self.db.delete_api_key(&key_id).await?;
+
+        let detail = format!("Deleted API key {} (name: {})", key_id, key.name);
+        self.db
+            .log_operation_async(Some(owner.id), "api_key.delete", detail);
         Ok(())
     }
 
@@ -564,6 +614,13 @@ impl AuthService {
         self.db
             .update_api_key_rate_limit(&key_id, payload.rate_limit_per_minute)
             .await?;
+
+        let detail = format!(
+            "Updated API key {} rate limit from {} to {}",
+            key_id, key.rate_limit_per_minute, payload.rate_limit_per_minute
+        );
+        self.db
+            .log_operation_async(Some(owner.id), "api_key.update_rate_limit", detail);
         Ok(())
     }
 
@@ -586,6 +643,13 @@ impl AuthService {
         }
 
         self.db.reset_api_key_failure(&key_id).await?;
+
+        let detail = format!(
+            "Reset failure count for API key {} (previous count: {})",
+            key_id, key.failure_count
+        );
+        self.db
+            .log_operation_async(Some(owner.id), "api_key.reset_failures", detail);
         Ok(())
     }
 

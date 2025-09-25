@@ -90,7 +90,7 @@ async fn try_create_test_server() -> Option<TestContext> {
         Uuid::new_v4().to_string().split('-').next().unwrap()
     );
     let password = "testpass123".to_string();
-    if let Err(err) = auth.create_user(&username, &password, true).await {
+    if let Err(err) = auth.create_user(None, &username, &password, true).await {
         eprintln!("Skipping integration test (user init failed): {err}");
         return None;
     }

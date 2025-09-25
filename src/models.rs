@@ -33,6 +33,8 @@ pub struct User {
     pub is_admin: bool,
     /// 是否为超级管理员（唯一且拥有全部权限）
     pub is_super_admin: bool,
+    /// 上次登录时间，用于判断首次登录
+    pub last_login_at: Option<DateTime<Utc>>,
     /// 账户创建时间
     pub created_at: DateTime<Utc>,
     /// 最后更新时间
@@ -104,6 +106,39 @@ pub struct MessageLog {
     pub timestamp: DateTime<Utc>,
 }
 
+/// 操作日志数据模型
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct OperationLog {
+    pub id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub operation_type: String,
+    pub detail: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 操作日志视图模型，包含关联的用户信息
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct OperationLogRecord {
+    pub id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub username: Option<String>,
+    pub is_admin: Option<bool>,
+    pub is_super_admin: Option<bool>,
+    pub operation_type: String,
+    pub detail: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 操作日志查询过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct OperationLogFilters {
+    pub user_id: Option<Uuid>,
+    pub operation_type: Option<String>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub limit: Option<i64>,
+}
+
 // ============================================================================
 // 认证相关的请求/响应模型
 // ============================================================================
@@ -120,6 +155,7 @@ pub struct LoginRequest {
 pub struct LoginResponse {
     pub token: String,
     pub expires_at: DateTime<Utc>,
+    pub must_reset_password: bool,
 }
 
 /// 创建用户请求（仅管理员）
@@ -137,6 +173,7 @@ pub struct UserResponse {
     pub username: String,
     pub is_admin: bool,
     pub is_super_admin: bool,
+    pub last_login_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -155,6 +192,7 @@ impl From<User> for UserResponse {
             username: user.username,
             is_admin: user.is_admin,
             is_super_admin: user.is_super_admin,
+            last_login_at: user.last_login_at,
             created_at: user.created_at,
             updated_at: user.updated_at,
         }

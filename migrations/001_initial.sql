@@ -7,6 +7,7 @@ CREATE TABLE auth_users (
     password_hash VARCHAR(255) NOT NULL COMMENT '使用 Argon2 哈希后的密码',
     is_admin BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否为管理员账号',
     is_super_admin BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否为唯一超级管理员',
+    last_login_at DATETIME NULL COMMENT '上次登录时间，用于判断首次登录',
     created_at DATETIME NOT NULL COMMENT '创建时间',
     updated_at DATETIME NOT NULL COMMENT '最后更新时间'
 ) COMMENT='系统用户表';
@@ -80,3 +81,15 @@ CREATE UNIQUE INDEX idx_auth_api_keys_secret ON auth_api_keys(key_secret);
 CREATE INDEX idx_auth_api_keys_user_status ON auth_api_keys(user_id, status);
 CREATE INDEX idx_message_logs_sender ON message_logs(sender_id, timestamp);
 CREATE INDEX idx_message_logs_timestamp ON message_logs(timestamp);
+
+-- 系统操作日志
+CREATE TABLE operation_logs (
+    id VARCHAR(36) PRIMARY KEY COMMENT '操作日志记录ID',
+    user_id VARCHAR(36) NULL COMMENT '触发操作的用户ID',
+    operation_type VARCHAR(100) NOT NULL COMMENT '操作类型标识',
+    detail TEXT NOT NULL COMMENT '操作详细描述',
+    created_at DATETIME NOT NULL COMMENT '记录创建时间'
+) COMMENT='系统操作日志表';
+
+CREATE INDEX idx_operation_logs_created_at ON operation_logs(created_at);
+CREATE INDEX idx_operation_logs_user ON operation_logs(user_id, created_at);
