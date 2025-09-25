@@ -1,5 +1,7 @@
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum_test::TestServer;
+use chrono::Utc;
+use hmac::{Hmac, Mac};
 use lark_messager::{
     auth::AuthService,
     database::Database,
@@ -7,13 +9,16 @@ use lark_messager::{
     lark::LarkClient,
     models::{
         CreateApiKeyRequest, CreateUserRequest, LoginRequest, ResetApiKeyFailuresRequest,
-        UpdateApiKeyStatusRequest, UpdateAuthConfigRequest, UpdateUserPasswordRequest,
-        UserResponse,
+        SendGroupMessageRequest, SendMessageRequest, UpdateApiKeyStatusRequest,
+        UpdateAuthConfigRequest, UpdateUserPasswordRequest, UserResponse,
     },
     routes::create_router,
 };
-use serde_json::Value;
+use serde_json::{self, Value};
+use sha2::Sha256;
 use uuid::Uuid;
+
+type HmacSha256 = Hmac<Sha256>;
 
 fn load_test_env() {
     dotenvy::from_filename(".env.test").ok();
@@ -22,6 +27,33 @@ fn load_test_env() {
 fn test_database_url() -> String {
     std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "mysql://root:password@localhost:3306/test_lark_messager".to_string())
+}
+
+fn required_env(key: &str) -> Option<String> {
+    match std::env::var(key) {
+        Ok(val) if !val.trim().is_empty() => Some(val),
+        _ => {
+            eprintln!("Skipping test because environment variable {key} is not set");
+            None
+        }
+    }
+}
+
+fn sign_api_request(
+    secret: &str,
+    method: &str,
+    path: &str,
+    timestamp: &str,
+    nonce: &str,
+) -> String {
+    let canonical = format!(
+        "{timestamp}\n{nonce}\n{method}\n{path}",
+        method = method.to_uppercase()
+    );
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    mac.update(canonical.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
 }
 
 struct TestContext {
@@ -81,6 +113,36 @@ fn bearer_headers(token: &str) -> (HeaderName, HeaderValue) {
         HeaderName::from_static("authorization"),
         HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
     )
+}
+
+async fn create_api_key_for_user(ctx: &TestContext, key_name: &str) -> (Uuid, String) {
+    let login = ctx
+        .server
+        .post("/auth/login")
+        .json(&LoginRequest {
+            username: ctx.username.clone(),
+            password: ctx.password.clone(),
+        })
+        .await;
+    login.assert_status_ok();
+    let login_body: Value = login.json();
+    let token = login_body["token"].as_str().unwrap();
+    let (header_name, header_value) = bearer_headers(token);
+
+    let create = ctx
+        .server
+        .post("/auth/api-keys")
+        .add_header(header_name, header_value)
+        .json(&CreateApiKeyRequest {
+            name: key_name.to_string(),
+            rate_limit_per_minute: 60,
+        })
+        .await;
+    create.assert_status(StatusCode::OK);
+    let created: Value = create.json();
+    let key_id = Uuid::parse_str(created["id"].as_str().unwrap()).unwrap();
+    let secret = created["secret"].as_str().unwrap().to_string();
+    (key_id, secret)
 }
 
 #[tokio::test]
@@ -749,4 +811,110 @@ async fn test_non_admin_cannot_delete_users() {
         .add_header(header_name, header_value)
         .await;
     forbidden_delete.assert_status(StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_send_message_to_user_via_api_key() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let Some(recipient) = required_env("TEST_LARK_RECIPIENT_USER") else {
+        return;
+    };
+    let recipient_type = std::env::var("TEST_LARK_RECIPIENT_USER_TYPE").ok();
+
+    let (key_id, secret) = create_api_key_for_user(&ctx, "user-message-key").await;
+
+    let timestamp = Utc::now().timestamp().to_string();
+    let nonce = Uuid::new_v4().to_string();
+    let signature = sign_api_request(&secret, "POST", "/messages/send", &timestamp, &nonce);
+
+    let message = format!(
+        "Integration direct message sent at {}",
+        Utc::now().to_rfc3339()
+    );
+    let response = ctx
+        .server
+        .post("/messages/send")
+        .add_header(
+            HeaderName::from_static("x-lark-access-key"),
+            HeaderValue::from_str(&key_id.to_string()).unwrap(),
+        )
+        .add_header(
+            HeaderName::from_static("x-lark-timestamp"),
+            HeaderValue::from_str(&timestamp).unwrap(),
+        )
+        .add_header(
+            HeaderName::from_static("x-lark-nonce"),
+            HeaderValue::from_str(&nonce).unwrap(),
+        )
+        .add_header(
+            HeaderName::from_static("x-lark-signature"),
+            HeaderValue::from_str(&signature).unwrap(),
+        )
+        .json(&SendMessageRequest {
+            recipient,
+            message,
+            recipient_type,
+        })
+        .await;
+
+    response.assert_status(StatusCode::OK);
+    let body: Value = response.json();
+    assert_eq!(body["status"], "sent");
+    assert!(body["message_id"].is_string());
+}
+
+#[tokio::test]
+async fn test_send_message_to_group_via_api_key() {
+    let Some(ctx) = try_create_test_server().await else {
+        return;
+    };
+
+    let Some(recipient) = required_env("TEST_LARK_RECIPIENT_GROUP") else {
+        return;
+    };
+    let recipient_type = std::env::var("TEST_LARK_RECIPIENT_GROUP_TYPE").ok();
+
+    let (key_id, secret) = create_api_key_for_user(&ctx, "group-message-key").await;
+
+    let timestamp = Utc::now().timestamp().to_string();
+    let nonce = Uuid::new_v4().to_string();
+    let signature = sign_api_request(&secret, "POST", "/messages/send-group", &timestamp, &nonce);
+
+    let message = format!(
+        "Integration group message sent at {}",
+        Utc::now().to_rfc3339()
+    );
+    let response = ctx
+        .server
+        .post("/messages/send-group")
+        .add_header(
+            HeaderName::from_static("x-lark-access-key"),
+            HeaderValue::from_str(&key_id.to_string()).unwrap(),
+        )
+        .add_header(
+            HeaderName::from_static("x-lark-timestamp"),
+            HeaderValue::from_str(&timestamp).unwrap(),
+        )
+        .add_header(
+            HeaderName::from_static("x-lark-nonce"),
+            HeaderValue::from_str(&nonce).unwrap(),
+        )
+        .add_header(
+            HeaderName::from_static("x-lark-signature"),
+            HeaderValue::from_str(&signature).unwrap(),
+        )
+        .json(&SendGroupMessageRequest {
+            recipient,
+            message,
+            recipient_type,
+        })
+        .await;
+
+    response.assert_status(StatusCode::OK);
+    let body: Value = response.json();
+    assert_eq!(body["status"], "sent");
+    assert!(body["message_id"].is_string());
 }
