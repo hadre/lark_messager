@@ -6,9 +6,9 @@
 
 use crate::handlers::{
     create_api_key, create_user, delete_api_key, delete_user, extend_jwt_token, get_auth_configs,
-    health_check, list_api_keys, login, reset_api_key_failures, send_group_message, send_message,
-    update_api_key_rate_limit, update_api_key_status, update_auth_configs, update_user_password,
-    verify_recipient, AppState,
+    health_check, list_api_keys, login, query_message_logs, query_operation_logs,
+    reset_api_key_failures, send_group_message, send_message, update_api_key_rate_limit,
+    update_api_key_status, update_auth_configs, update_user_password, verify_recipient, AppState,
 };
 use axum::{
     routing::{delete, get, patch, post},
@@ -49,6 +49,8 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/auth/configs", get(get_auth_configs))
         .route("/auth/configs", patch(update_auth_configs))
+        .route("/audit/operation-logs/query", post(query_operation_logs))
+        .route("/messages/logs/query", post(query_message_logs))
         .route("/messages/send", post(send_message))
         .route("/messages/send-group", post(send_group_message))
         .route("/recipients/verify", post(verify_recipient))

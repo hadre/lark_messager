@@ -10,7 +10,8 @@
 
 use crate::error::AppResult;
 use crate::models::{
-    ApiKey, AuthConfig, MessageLog, OperationLog, OperationLogFilters, OperationLogRecord, User,
+    ApiKey, AuthConfig, MessageLog, MessageLogFilters, MessageLogRecord, OperationLog,
+    OperationLogFilters, OperationLogRecord, User,
 };
 use chrono::{DateTime, Utc};
 use sqlx::{MySql, MySqlPool, Pool, QueryBuilder, Row};
@@ -495,56 +496,61 @@ impl Database {
         })
     }
 
-    pub async fn get_message_logs(
+    pub async fn list_message_logs(
         &self,
-        sender_id: Option<Uuid>,
-        limit: Option<i64>,
-    ) -> AppResult<Vec<MessageLog>> {
-        let limit = limit.unwrap_or(100);
+        filters: MessageLogFilters,
+    ) -> AppResult<Vec<MessageLogRecord>> {
+        let mut query_builder = QueryBuilder::<MySql>::new(
+            "SELECT m.id, m.sender_type, m.sender_id, k.name AS sender_name, u.username AS owner_username, m.recipient, m.message, m.status, m.timestamp FROM message_logs m LEFT JOIN auth_api_keys k ON m.sender_id = k.id LEFT JOIN auth_users u ON k.user_id = u.id WHERE 1 = 1",
+        );
 
-        let rows = match sender_id {
-            Some(id) => {
-                sqlx::query(
-                    r#"
-                    SELECT id, sender_type, sender_id, recipient, message, status, timestamp
-                    FROM message_logs
-                    WHERE sender_id = ?
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                    "#,
-                )
-                .bind(id.to_string())
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?
-            }
-            None => {
-                sqlx::query(
-                    r#"
-                    SELECT id, sender_type, sender_id, recipient, message, status, timestamp
-                    FROM message_logs
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                    "#,
-                )
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?
-            }
-        };
+        if let Some(sender_id) = filters.sender_id {
+            query_builder
+                .push(" AND m.sender_id = ")
+                .push_bind(sender_id);
+        }
 
-        Ok(rows
-            .into_iter()
-            .map(|row| MessageLog {
-                id: Uuid::parse_str(row.get::<String, _>("id").as_str()).unwrap(),
-                sender_type: row.get("sender_type"),
-                sender_id: Uuid::parse_str(row.get::<String, _>("sender_id").as_str()).unwrap(),
-                recipient: row.get("recipient"),
-                message: row.get("message"),
-                status: row.get("status"),
-                timestamp: row.get("timestamp"),
-            })
-            .collect())
+        if let Some(sender_type) = &filters.sender_type {
+            query_builder
+                .push(" AND m.sender_type = ")
+                .push_bind(sender_type);
+        }
+
+        if let Some(status) = &filters.status {
+            query_builder.push(" AND m.status = ").push_bind(status);
+        }
+
+        if let Some(sender_name) = &filters.sender_name {
+            query_builder.push(" AND k.name = ").push_bind(sender_name);
+        }
+
+        if let Some(owner_username) = &filters.owner_username {
+            query_builder
+                .push(" AND u.username = ")
+                .push_bind(owner_username);
+        }
+
+        if let Some(start_time) = filters.start_time {
+            query_builder
+                .push(" AND m.timestamp >= ")
+                .push_bind(start_time);
+        }
+
+        if let Some(end_time) = filters.end_time {
+            query_builder
+                .push(" AND m.timestamp <= ")
+                .push_bind(end_time);
+        }
+
+        let limit = filters.limit.unwrap_or(100).max(1).min(1000);
+        query_builder
+            .push(" ORDER BY m.timestamp DESC LIMIT ")
+            .push_bind(limit);
+
+        let query = query_builder.build_query_as::<MessageLogRecord>();
+        let records = query.fetch_all(&self.pool).await?;
+
+        Ok(records)
     }
 
     // ---------------------------------------------------------------------
@@ -612,8 +618,8 @@ impl Database {
             "SELECT o.id, o.user_id, u.username, u.is_admin, u.is_super_admin, o.operation_type, o.detail, o.created_at FROM operation_logs o LEFT JOIN auth_users u ON o.user_id = u.id WHERE 1 = 1",
         );
 
-        if let Some(user_id) = filters.user_id {
-            query_builder.push(" AND o.user_id = ").push_bind(user_id);
+        if let Some(username) = &filters.username {
+            query_builder.push(" AND u.username = ").push_bind(username);
         }
 
         if let Some(operation_type) = &filters.operation_type {

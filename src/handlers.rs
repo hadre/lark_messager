@@ -14,11 +14,13 @@ use crate::error::{AppError, AppResult};
 use crate::lark::LarkClient;
 use crate::models::{
     ApiKeyStatus, ApiKeySummary, AuthConfigResponse, CreateApiKeyRequest, CreateApiKeyResponse,
-    CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageResponse, MessageStatus,
+    CreateUserRequest, HealthResponse, LoginRequest, LoginResponse, MessageLogListResponse,
+    MessageLogQuery, MessageResponse, MessageStatus, OperationLogListResponse, OperationLogQuery,
     ResetApiKeyFailuresRequest, SendGroupMessageRequest, SendMessageRequest, SenderType,
     UpdateApiKeyRateLimitRequest, UpdateApiKeyStatusRequest, UpdateAuthConfigRequest,
     UpdateUserPasswordRequest, User, UserResponse, VerifyRecipientRequest, VerifyRecipientResponse,
 };
+use crate::models::{MessageLogFilters, OperationLogFilters};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -291,6 +293,85 @@ pub async fn update_auth_configs(
     ensure_admin(&user)?;
     let response = state.auth.update_auth_configs(&user, request).await?;
     Ok(Json(response))
+}
+
+// -----------------------------------------------------------------------------
+// 日志查询
+// -----------------------------------------------------------------------------
+
+pub async fn query_operation_logs(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(request): Json<OperationLogQuery>,
+) -> AppResult<Json<OperationLogListResponse>> {
+    let user = authenticate_user_from_jwt(&headers, &state).await?;
+    ensure_admin(&user)?;
+
+    let OperationLogQuery {
+        username,
+        operation_type,
+        start_time,
+        end_time,
+        limit,
+    } = request;
+
+    let records = state
+        .db
+        .list_operation_logs(OperationLogFilters {
+            username,
+            operation_type,
+            start_time,
+            end_time,
+            limit,
+        })
+        .await?;
+
+    Ok(Json(OperationLogListResponse { records }))
+}
+
+pub async fn query_message_logs(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(request): Json<MessageLogQuery>,
+) -> AppResult<Json<MessageLogListResponse>> {
+    let user = authenticate_user_from_jwt(&headers, &state).await?;
+
+    let MessageLogQuery {
+        sender_id,
+        sender_type,
+        status,
+        sender_name,
+        owner_username,
+        start_time,
+        end_time,
+        limit,
+    } = request;
+
+    let mut filters = MessageLogFilters {
+        sender_id,
+        sender_type,
+        status,
+        sender_name,
+        owner_username,
+        start_time,
+        end_time,
+        limit,
+    };
+
+    if !user.is_admin {
+        filters
+            .owner_username
+            .get_or_insert_with(|| user.username.clone());
+
+        if filters.owner_username.as_deref() != Some(user.username.as_str()) {
+            return Err(AppError::Unauthorized(
+                "Cannot access another user's message logs".to_string(),
+            ));
+        }
+    }
+
+    let records = state.db.list_message_logs(filters).await?;
+    Ok(Json(MessageLogListResponse { records }))
 }
 
 // -----------------------------------------------------------------------------

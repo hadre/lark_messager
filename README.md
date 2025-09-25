@@ -8,6 +8,7 @@ A Rust-based Lark (Feishu) messaging bot API service that provides secure messag
 - **Lark Integration**: Send messages to users and groups via Lark Bot API
 - **Message Validation**: Verify recipient existence before sending
 - **Comprehensive Logging**: Request logging, error tracking, and debug information
+- **Auditable History**: Filterable operation and message logs for post-event reviews
 - **Docker Support**: Containerized deployment with Docker Compose
 - **Database Support**: MySQL with automatic migrations
 - **Rate Limiting Ready**: Architecture supports rate limiting implementation
@@ -155,7 +156,29 @@ PATCH /auth/configs                  # Update authentication-related configs (ad
 POST /messages/send                  # Send message to user (HMAC headers required)
 POST /messages/send-group            # Send message to group (HMAC headers required)
 POST /recipients/verify              # Verify recipient exists (HMAC headers required)
+POST /messages/logs/query            # Filter message delivery history (JWT required)
+POST /audit/operation-logs/query     # Filter admin/user actions (JWT required, admin only)
 ```
+
+#### Log Query Payloads
+Both log-query endpoints accept a JSON body with optional filters. Omitting a field removes that filter; empty payloads return the most recent entries (default limit 100, max 1000).
+
+`/messages/logs/query` fields:
+
+- `sender_id` (UUID) – API key ID that initiated the message
+- `sender_name` (string) – API key friendly name (auto-resolves to `sender_id`)
+- `owner_username` (string) – owner username; non-admins default to their own account
+- `status` (string) – delivery status, e.g. `sent` / `failed`
+- `sender_type` (string) – e.g. `api_key`
+- `start_time` / `end_time` (RFC3339) – timestamp window for `timestamp`
+- `limit` (int) – number of results (1–1000, default 100)
+
+`/audit/operation-logs/query` fields (admin only):
+
+- `username` (string) – actor username
+- `operation_type` (string) – e.g. `user.create`, `api_key.delete`
+- `start_time` / `end_time` (RFC3339)
+- `limit` (int)
 
 ### Example Usage
 
@@ -202,6 +225,37 @@ curl -X POST http://localhost:8080/recipients/verify \
     "recipient": "user@example.com",
     "recipient_type": "email"
   }'
+```
+
+#### Query Message History
+```bash
+JWT=$(curl -s -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"ops-admin","password":"S3curePass!"}' | jq -r '.token')
+
+curl -X POST http://localhost:8080/messages/logs/query \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "sender_name": "local-dev",
+        "status": "sent",
+        "start_time": "2025-09-20T00:00:00Z",
+        "end_time": "2025-09-25T23:59:59Z",
+        "limit": 50
+      }'
+```
+
+#### Query Operation Logs (Admin)
+```bash
+curl -X POST http://localhost:8080/audit/operation-logs/query \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "username": "ops-admin",
+        "operation_type": "api_key.create",
+        "start_time": "2025-09-24T00:00:00Z",
+        "limit": 20
+      }'
 ```
 
 ## Configuration

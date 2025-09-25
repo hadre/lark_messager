@@ -106,6 +106,20 @@ pub struct MessageLog {
     pub timestamp: DateTime<Utc>,
 }
 
+/// 消息日志视图模型，包含 API Key 与用户信息
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MessageLogRecord {
+    pub id: Uuid,
+    pub sender_type: String,
+    pub sender_id: Uuid,
+    pub sender_name: Option<String>,
+    pub owner_username: Option<String>,
+    pub recipient: String,
+    pub message: String,
+    pub status: String,
+    pub timestamp: DateTime<Utc>,
+}
+
 /// 操作日志数据模型
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OperationLog {
@@ -132,11 +146,59 @@ pub struct OperationLogRecord {
 /// 操作日志查询过滤条件
 #[derive(Debug, Clone, Default)]
 pub struct OperationLogFilters {
-    pub user_id: Option<Uuid>,
+    pub username: Option<String>,
     pub operation_type: Option<String>,
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
     pub limit: Option<i64>,
+}
+
+/// 消息日志查询过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct MessageLogFilters {
+    pub sender_id: Option<Uuid>,
+    pub sender_type: Option<String>,
+    pub status: Option<String>,
+    pub sender_name: Option<String>,
+    pub owner_username: Option<String>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub limit: Option<i64>,
+}
+
+/// 操作日志查询请求
+#[derive(Debug, Deserialize)]
+pub struct OperationLogQuery {
+    pub username: Option<String>,
+    pub operation_type: Option<String>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub limit: Option<i64>,
+}
+
+/// 操作日志查询响应
+#[derive(Debug, Serialize)]
+pub struct OperationLogListResponse {
+    pub records: Vec<OperationLogRecord>,
+}
+
+/// 消息日志查询请求
+#[derive(Debug, Deserialize)]
+pub struct MessageLogQuery {
+    pub sender_id: Option<Uuid>,
+    pub sender_type: Option<String>,
+    pub status: Option<String>,
+    pub sender_name: Option<String>,
+    pub owner_username: Option<String>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub limit: Option<i64>,
+}
+
+/// 消息日志查询响应
+#[derive(Debug, Serialize)]
+pub struct MessageLogListResponse {
+    pub records: Vec<MessageLogRecord>,
 }
 
 // ============================================================================

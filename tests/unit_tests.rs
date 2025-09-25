@@ -1,9 +1,11 @@
+use chrono::{Duration, Utc};
 use lark_messager::{
     auth::AuthService,
     database::Database,
     error::AppError,
     models::{
-        ApiKeyStatus, CreateApiKeyRequest, ResetApiKeyFailuresRequest, UpdateApiKeyStatusRequest,
+        ApiKeyStatus, CreateApiKeyRequest, MessageLogFilters, OperationLogFilters,
+        ResetApiKeyFailuresRequest, UpdateApiKeyStatusRequest,
     },
 };
 use uuid::Uuid;
@@ -132,4 +134,95 @@ async fn test_delete_super_admin_is_blocked() {
         }
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn test_operation_log_query_filters() {
+    load_test_env();
+    let db = Database::new_with_migrations(&test_database_url())
+        .await
+        .unwrap();
+    let auth = AuthService::new("unit_test_secret".to_string(), db.clone())
+        .await
+        .unwrap();
+
+    let username = format!("op_user_{}", Uuid::new_v4());
+    let user = auth
+        .create_user(None, &username, "Password123!", false)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    db.record_operation_log(Some(user.id), "user.test", "created sample")
+        .await
+        .unwrap();
+
+    let logs = db
+        .list_operation_logs(OperationLogFilters {
+            username: Some(user.username.clone()),
+            operation_type: Some("user.test".to_string()),
+            start_time: Some(now - Duration::minutes(1)),
+            end_time: Some(now + Duration::minutes(1)),
+            limit: Some(10),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert!(!logs.is_empty());
+    assert_eq!(logs[0].operation_type, "user.test");
+    assert_eq!(
+        logs[0].owner_username.as_deref(),
+        Some(user.username.as_str())
+    );
+}
+
+#[tokio::test]
+async fn test_message_log_query_filters() {
+    load_test_env();
+    let db = Database::new_with_migrations(&test_database_url())
+        .await
+        .unwrap();
+    let auth = AuthService::new("unit_test_secret".to_string(), db.clone())
+        .await
+        .unwrap();
+
+    let username = format!("msg_user_{}", Uuid::new_v4());
+    let user = auth
+        .create_user(None, &username, "Password123!", false)
+        .await
+        .unwrap();
+
+    let api_key = auth
+        .create_api_key(
+            &user,
+            CreateApiKeyRequest {
+                name: "log-key".to_string(),
+                rate_limit_per_minute: 30,
+            },
+        )
+        .await
+        .unwrap();
+
+    db.log_message("api_key", &api_key.id, "user@example.com", "hello", "sent")
+        .await
+        .unwrap();
+
+    let logs = db
+        .list_message_logs(MessageLogFilters {
+            sender_id: Some(api_key.id),
+            status: Some("sent".to_string()),
+            limit: Some(10),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert!(!logs.is_empty());
+    assert_eq!(logs[0].sender_id, api_key.id);
+    assert_eq!(logs[0].status, "sent");
+    assert_eq!(
+        logs[0].owner_username.as_deref(),
+        Some(user.username.as_str())
+    );
 }
