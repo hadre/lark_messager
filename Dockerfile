@@ -44,9 +44,12 @@ RUN groupadd -g ${APP_GID} ${APP_USER} && \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/lark_messager /usr/local/bin/lark_messager
+COPY --from=builder /app/target/release/init_system /usr/local/bin/init_system
 COPY --from=builder /app/migrations ./migrations
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN chown -R ${APP_USER}:${APP_USER} /app
+RUN chown -R ${APP_USER}:${APP_USER} /app \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV RUST_LOG=info \
     APP_ENV=production
@@ -58,4 +61,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/lark_messager"]

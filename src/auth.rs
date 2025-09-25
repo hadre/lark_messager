@@ -383,19 +383,6 @@ impl AuthService {
             .await
     }
 
-    pub async fn create_super_admin(&self, username: &str, password: &str) -> AppResult<User> {
-        if username.trim().is_empty() {
-            return Err(AppError::Validation("Username cannot be empty".to_string()));
-        }
-
-        if password.trim().is_empty() {
-            return Err(AppError::Validation("Password cannot be empty".to_string()));
-        }
-
-        let password_hash = self.hash_password(password)?;
-        self.db.create_super_admin(username, &password_hash).await
-    }
-
     pub async fn change_own_password(
         &self,
         requester: &User,

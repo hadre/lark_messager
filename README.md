@@ -33,35 +33,48 @@ cd lark_messager
 cp .env.example .env
 ```
 
-3. Update `.env` with your Lark App credentials:
+3. Update `.env` with your Lark App credentials and first-deployment flag:
 ```env
 LARK_APP_ID=your-lark-app-id
 LARK_APP_SECRET=your-lark-app-secret
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+FIRST_DEPLOYMENT=true
 ```
 
-4. Build and run:
+4. Initialise the database schema (one-time):
 ```bash
-cargo build
+cargo run --bin init_system
+```
+This command checks `FIRST_DEPLOYMENT`; when the flag is `true` it applies all migrations and seeds a default `super_admin` user with the temporary password `ChangeMe123!`. After the command succeeds, set `FIRST_DEPLOYMENT=false` (or remove the variable) to prevent re-running the seed logic.
+
+5. Start the API server:
+```bash
 cargo run
 ```
+The server listens on `http://localhost:8080` by default. Ensure migrations have already been applied (via `init_system` or another migration tool) before starting the API.
 
-The server will start on `http://localhost:8080`. Keep it running so migrations can finish and management requests succeed.
-
-5. Bootstrap an initial admin account (one-time):
+6. Sign in as the seeded super admin, rotate the password, and create additional accounts:
 ```bash
-cargo run --bin generate_credentials -- --user admin --password change_me_now
-```
-You can rerun this command with different credentials to provision additional users.
-
-6. Log in and create an API key for signed requests:
-```bash
-# 6a. Obtain a JWT session token
+# 6a. Obtain a JWT session token using the seeded credentials
 curl -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "change_me_now"}'
+  -d '{"username": "super_admin", "password": "ChangeMe123!"}'
 
-# 6b. Create an API key scoped to the logged-in user
+# 6b. Decode the JWT payload to find the `sub` field (your user UUID) and change the password immediately
+#     You can paste the token into https://jwt.io or use any JWT tool to inspect the payload.
+#     Then call:
+# curl -X PATCH http://localhost:8080/auth/users/<SUPER_ADMIN_ID>/password \
+#   -H "Authorization: Bearer <jwt_token>" \
+#   -H "Content-Type: application/json" \
+#   -d '{"current_password":"ChangeMe123!","new_password":"<new password>"}'
+
+# 6c. Create additional admins or regular users (super admin can set "is_admin": true)
+# curl -X POST http://localhost:8080/auth/users \
+#   -H "Authorization: Bearer <jwt_token>" \
+#   -H "Content-Type: application/json" \
+#   -d '{"username":"ops-admin","password":"S3curePass!","is_admin":true}'
+
+# 6d. Create an API key scoped to the logged-in user
 curl -X POST http://localhost:8080/auth/api-keys \
   -H "Authorization: Bearer <jwt_token>" \
   -H "Content-Type: application/json" \
@@ -70,6 +83,8 @@ curl -X POST http://localhost:8080/auth/api-keys \
 Record the returned `secret` immediately; it is only shown once. Use the `/auth/api-keys` suite to list, disable, delete, or reset failure counts as needed.
 
 ### Docker Deployment
+
+The container entrypoint executes the same initialisation command when `FIRST_DEPLOYMENT=true`. Set the flag for the very first rollout, then switch it to `false` (or remove it) before restarting containers.
 
 1. Build and start with Docker Compose:
 ```bash
@@ -202,7 +217,7 @@ curl -X POST http://localhost:8080/recipients/verify \
 | `SERVER_HOST` | Server bind address | `127.0.0.1` | No |
 | `SERVER_PORT` | Server port | `8080` | No |
 | `LOG_LEVEL` | Logging level | `info` | No |
-| `AUTO_MIGRATE` | Run migrations on startup | `true` | No |
+| `FIRST_DEPLOYMENT` | Indicates first rollout; entrypoint/init command runs bootstrap when true | `false` | No |
 | `API_KEY_LENGTH` | Generated API key length | `64` | No |
 
 ### Recipient Types
@@ -247,7 +262,7 @@ FLUSH PRIVILEGES;
 
 2. Database migrations are automatically applied on startup. Migration files are located in the `migrations/` directory.
 
-Auth data lives in `auth_users` and `auth_api_keys`, while tunable thresholds are stored in `app_configs` (seeded with sensible defaults in `002_unified_auth.sql`).
+Auth data lives in `auth_users` and `auth_api_keys`, while tunable thresholds are stored in `app_configs` (all seeded via `migrations/001_initial.sql`).
 
 ### Adding New Features
 

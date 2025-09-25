@@ -9,6 +9,7 @@ x-app-environment: &app-environment
   SERVER_PORT: 8080
   LOG_LEVEL: ${LOG_LEVEL:-info}
   API_KEY_LENGTH: 64
+  FIRST_DEPLOYMENT: ${FIRST_DEPLOYMENT:-false}
 
 services:
   lark_messager:

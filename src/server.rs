@@ -104,16 +104,6 @@ impl Server {
         let db = Database::new(&self.config.database_url).await?;
         info!("Database connection established");
 
-        // 根据配置决定是否执行数据库迁移
-        if self.config.auto_migrate {
-            info!("Running database migrations (AUTO_MIGRATE=true)...");
-            db.migrate().await?;
-            info!("Database migrations completed successfully");
-        } else {
-            info!("Skipping database migrations (AUTO_MIGRATE=false)");
-            info!("Note: Please ensure database schema is up-to-date before starting");
-        }
-
         // 第三步：初始化认证服务
         // 配置 JWT 和 API Key 双重认证机制
         let auth = AuthService::new(self.config.jwt_secret.clone(), db.clone()).await?;
