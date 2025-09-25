@@ -2,7 +2,7 @@ use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum_test::TestServer;
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
-use jsonwebtoken::dangerous_insecure_decode;
+use jsonwebtoken::{decode, DecodingKey, Validation};
 use lark_messager::{
     auth::AuthService,
     database::Database,
@@ -21,11 +21,6 @@ use sha2::Sha256;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
-
-#[derive(Debug, Deserialize)]
-struct JwtClaims {
-    sub: String,
-}
 
 fn load_test_env() {
     dotenvy::from_filename(".env.test").ok();
@@ -584,8 +579,7 @@ async fn test_super_admin_cannot_delete_self() {
     let login_body: Value = login.json();
     let token = login_body["token"].as_str().unwrap();
 
-    let claims = dangerous_insecure_decode::<JwtClaims>(token).unwrap();
-    let super_admin_id = claims.claims.sub;
+    let super_admin_id = extract_sub_from_jwt(token).expect("missing sub");
 
     let (header_name, header_value) = bearer_headers(token);
     let delete = ctx
@@ -1089,4 +1083,25 @@ async fn test_send_message_to_group_via_api_key() {
     let body: Value = response.json();
     assert_eq!(body["status"], "sent");
     assert!(body["message_id"].is_string());
+}
+#[derive(Debug, Deserialize)]
+struct JwtClaims {
+    sub: String,
+    username: String,
+    exp: usize,
+    iat: usize,
+    is_admin: bool,
+    #[serde(default)]
+    is_super_admin: bool,
+}
+
+fn extract_sub_from_jwt(token: &str) -> Option<String> {
+    let secret = std::env::var("TEST_JWT_SECRET").unwrap_or_else(|_| "test_jwt_secret".to_string());
+    let decoded = decode::<JwtClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::default(),
+    )
+    .ok()?;
+    Some(decoded.claims.sub)
 }
